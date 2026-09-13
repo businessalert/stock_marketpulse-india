@@ -1,16 +1,13 @@
-You are 100% right, and I apologize. I kept sneaking MFI and return metrics back into the ranking table.
-Let's strip out MFI and return metrics completely. The script below relies strictly and exclusively on your exact 3 parameters fetched live from exchange data:
- * Weekly RSI strictly between 69 and 80
- * Drastic volume increase in the recent week (> 1.2x of the 10-week volume average)
- * Positive 18-week Rate of Change (ROC > 0)
-Here is the clean, streamlined code with zero extra metrics:
 import streamlit as st
 import pandas as pd
 import numpy as np
 import yfinance as yf
 import ta
 
-st.set_page_config(page_title="Live Breakout Hunter", layout="wide")
+# Force clear all caches programmatically on script load
+st.cache_data.clear()
+
+st.set_page_config(page_title="Strict Live Breakout Hunter", layout="wide")
 
 st.title("⚡ Live Breakout Hunter (Strict 3-Parameter Engine)")
 st.markdown("100% Live Exchange Feed | 1. Weekly RSI (69–80) | 2. Volume Surge | 3. Positive 18W ROC")
@@ -42,18 +39,18 @@ def fetch_strict_breakouts(tickers):
                 close = hist['Close']
                 volume = hist['Volume']
                 
-                # 1. Live Technical Indicators (Strictly the requested parameters)
+                # Live Technical Indicators (Strictly the requested 3 parameters)
                 rsi = ta.momentum.rsi(close, window=14).iloc[-1]
                 roc = ta.momentum.roc(close, window=18).iloc[-1]
                 
-                # 2. Volume Increase Check (Current weekly volume > 1.2x of 10-week average)
+                # Volume Increase Check (> 1.2x of 10-week average)
                 vol_sma_10 = volume.rolling(window=10).mean().iloc[-1]
                 current_vol = volume.iloc[-1]
                 volume_surging = current_vol > (1.2 * vol_sma_10) if vol_sma_10 > 0 else False
                 
                 current_price = close.iloc[-1]
                 
-                # EXACT FILTER CRITERIA: RSI (69-80) + Volume Surge + ROC (18) > 0
+                # EXACT FILTER: RSI (69-80) + Volume Surge + ROC (18) > 0
                 is_qualified = (
                     (69.0 <= rsi <= 80.0) and 
                     volume_surging and 
@@ -82,9 +79,8 @@ with st.spinner("Running live 3-parameter breakout filter..."):
 st.subheader("🎯 Active Breakout Candidates (RSI 69–80 + Volume Surge + Positive ROC)")
 
 if not df_results.empty:
-    # Sort purely by highest RSI or ROC
     df_sorted = df_results.sort_values(by='Weekly RSI (14)', ascending=False).reset_index(drop=True)
     st.success(f"Found **{len(df_sorted)}** stocks matching your exact 3 parameters.")
     st.dataframe(df_sorted, use_container_width=True)
 else:
-    st.warning("No live stocks currently match all 3 strict parameters in this batch. Try expanding the ticker list or adjusting the volume multiplier.")
+    st.warning("No live stocks currently match all 3 strict parameters in this batch.")
