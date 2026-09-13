@@ -2,91 +2,96 @@ import streamlit as st
 import pandas as pd
 import plotly.express as px
 
-st.set_page_config(page_title="Market Cap Flow & Industry Dashboard", layout="wide")
+st.set_page_config(page_title="Stock Market Pulse - PEAD & Top Gainers Dashboard", layout="wide")
 
-st.title("📊 Market Capitalization Flow & Stock Intelligence Dashboard")
-st.markdown("Integrated Dashboard featuring Real Company Names, NSE/BSE Tickers, Industry Groups, and Capital Shifts.")
+st.title("🚀 PEAD & Top 500 Gainers Intelligence Dashboard")
+st.markdown("Advanced Earnings Drift, Momentum Tracking, and Stock Screener powered by Master Mapping Data.")
 
 @st.cache_data
-def load_data():
-    # Load mapping CSV
-    mapping_df = pd.read_csv("query-results_13.09.2026.csv")
-    
-    # Load Excel Market Cap Flow sheets
-    excel_file = "Market Cap Flow.xlsx"
-    xls = pd.ExcelFile(excel_file)
-    
-    sheet7 = pd.read_excel(excel_file, sheet_name="Sheet7")
-    industry_df = pd.read_excel(excel_file, sheet_name="Industry")
-    industry_group_df = pd.read_excel(excel_file, sheet_name="Industry Group")
-    
-    return mapping_df, sheet7, industry_df, industry_group_df
+def load_master_data():
+    # Load the master mapping CSV file containing fundamentals, returns, and PEAD indicators
+    df = pd.read_csv("query-results_13.09.2026.csv")
+    return df
 
 try:
-    mapping_df, sheet7, industry_df, industry_group_df = load_data()
+    df = load_master_data()
     
-    # Sidebar Navigation
-    st.sidebar.header("Navigation")
-    dashboard_mode = st.sidebar.radio("Select View:", [
-        "Industry Capital Flow Overview",
-        "Stock Screener & Entity Mapping",
-        "Cigar Butt / Value Opportunities"
+    # Sidebar Navigation for your real dashboards
+    st.sidebar.header("Dashboard Modules")
+    module = st.sidebar.radio("Select View:", [
+        "🔥 Top Gainers & Momentum Tracker",
+        "📈 PEAD (Post-Earnings Announcement Drift)",
+        "🧹 Cigar Butt & Value Screener",
+        "🔍 Master Stock Explorer"
     ])
     
-    if dashboard_mode == "Industry Capital Flow Overview":
-        st.subheader("Industry-wise Market Capitalization & Stock Count")
+    if module == "🔥 Top Gainers & Momentum Tracker":
+        st.subheader("Top 500 Gainers & Momentum Performance")
+        st.markdown("Tracking top performing stocks based on 6-month and 1-year returns, volume/RSI indicators, and market capitalization.")
         
-        # Clean Sheet7
-        if "Industry" in sheet7.columns:
-            st.dataframe(sheet7, use_container_width=True)
+        # Sort by 1-year return or 6-month return if available
+        return_col = 'Return over 1year' if 'Return over 1year' in df.columns else df.columns[0]
+        
+        col1, col2 = st.columns(2)
+        with col1:
+            min_mcap = st.number_input("Min Market Capitalization (Cr):", value=100.0)
+        with col2:
+            min_rsi = st.slider("Min RSI (Momentum Filter):", 0, 100, 50)
             
-            # Visualizing Top Industries by Market Cap
-            if "SUM of Market Capitalization" in sheet7.columns:
-                top_industries = sheet7.sort_values(by="SUM of Market Capitalization", ascending=False).head(15)
-                fig = px.bar(
-                    top_industries, 
-                    x="Industry", 
-                    y="SUM of Market Capitalization",
-                    color="COUNTA of Name",
-                    title="Top 10 Industries by Market Capitalization",
-                    template="plotly_dark"
-                )
-                st.plotly_chart(fig, use_container_width=True)
+        filtered = df[(df['Market Capitalization'] >= min_mcap) & (df['RSI'] >= min_rsi)] if 'Market Capitalization' in df.columns and 'RSI' in df.columns else df
+        
+        top_gainers = filtered.sort_values(by=return_col, ascending=False).head(100)
+        
+        display_cols = ['Name', 'BSE Code', 'NSE Code', 'Industry', 'Current Price', 'Market Capitalization', 'Return over 6months', 'Return over 1year', 'RSI', 'Price to Earning']
+        existing_cols = [c for c in display_cols if c in top_gainers.columns]
+        
+        st.write(f"Showing top **{len(top_gainers)}** momentum gainers matching criteria:")
+        st.dataframe(top_gainers[existing_cols], use_container_width=True)
+        
+    elif module == "📈 PEAD (Post-Earnings Announcement Drift)":
+        st.subheader("PEAD (Post-Earnings Announcement Drift) Screener")
+        st.markdown("Identifying companies with strong earnings surprises, positive YOY/QoQ profit growth, and sustained upward price momentum.")
+        
+        # PEAD filtering logic: Positive profit growth + positive quarterly sales growth + strong ROCE
+        if all(col in df.columns for col in ['YOY Quarterly profit growth', 'Return on capital employed', 'RSI']):
+            pead_stocks = df[
+                (df['YOY Quarterly profit growth'] > 20) & 
+                (df['Return on capital employed'] > 15) & 
+                (df['RSI'] > 50)
+            ].sort_values(by='YOY Quarterly profit growth', ascending=False)
+            
+            st.success(f"Found **{len(pead_stocks)}** stocks exhibiting high earnings growth and positive price drift characteristics (PEAD).")
+            
+            pead_cols = ['Name', 'BSE Code', 'NSE Code', 'Industry', 'Current Price', 'YOY Quarterly profit growth', 'Net Profit latest quarter', 'Return on capital employed', 'RSI', 'Price to Earning']
+            existing_pead_cols = [c for c in pead_cols if c in pead_stocks.columns]
+            
+            st.dataframe(pead_stocks[existing_pead_cols].head(100), use_container_width=True)
         else:
-            st.info("Displaying raw industry summary data.")
-            st.dataframe(sheet7.head(50), use_container_width=True)
+            st.info("Required columns for PEAD analysis are currently missing from the dataset.")
+            st.dataframe(df.head(50), use_container_width=True)
             
-    elif dashboard_mode == "Stock Screener & Entity Mapping":
-        st.subheader("Master Stock Mapping & Fundamental Screener")
+    elif module == "🧹 Cigar Butt & Value Screener":
+        st.subheader("Cigar Butt & Deep Value Opportunities")
+        st.markdown("Companies trading below intrinsic value with solid underlying fundamentals.")
         
-        # Filters
-        industries = mapping_df['Industry'].dropna().unique()
-        selected_industry = st.selectbox("Filter by Industry:", ["All"] + list(industries))
-        
-        filtered_df = mapping_df if selected_industry == "All" else mapping_df[mapping_df['Industry'] == selected_industry]
-        
-        st.write(f"Showing **{len(filtered_df)}** companies")
-        
-        display_cols = ['Name', 'BSE Code', 'NSE Code', 'Industry Group', 'Industry', 'Current Price', 'Market Capitalization', 'Price to Earning', 'Return on capital employed']
-        existing_cols = [col for col in display_cols if col in filtered_df.columns]
-        
-        st.dataframe(filtered_df[existing_cols], use_container_width=True)
-        
-    elif dashboard_mode == "Cigar Butt / Value Opportunities":
-        st.subheader("Cigar Butt & Deep Value Screener")
-        st.markdown("Filtering companies trading below intrinsic value or at attractive P/E ratios with solid ROCE.")
-        
-        if 'Intrinsic Value' in mapping_df.columns and 'Current Price' in mapping_df.columns:
-            value_stocks = mapping_df[mapping_df['Intrinsic Value'] > mapping_df['Current Price']].dropna(subset=['Name', 'Current Price', 'Intrinsic Value'])
-            st.write(f"Found **{len(value_stocks)}** potential value opportunities.")
-            
-            val_cols = ['Name', 'BSE Code', 'NSE Code', 'Industry', 'Current Price', 'Intrinsic Value', 'Price to Earning', 'Return on capital employed']
-            existing_val_cols = [col for col in val_cols if col in value_stocks.columns]
-            
-            st.dataframe(value_stocks[existing_val_cols].head(50), use_container_width=True)
+        if 'Intrinsic Value' in df.columns and 'Current Price' in df.columns:
+            value_stocks = df[df['Intrinsic Value'] > df.columns and df['Intrinsic Value'] > df['Current Price']].dropna(subset=['Name', 'Current Price', 'Intrinsic Value'])
+            st.write(f"Found **{len(value_stocks)}** value stocks.")
+            st.dataframe(value_stocks[['Name', 'BSE Code', 'NSE Code', 'Industry', 'Current Price', 'Intrinsic Value', 'Price to Earning', 'Return on capital employed']].head(100), use_container_width=True)
         else:
-            st.info("Fundamental valuation columns not found in the mapping dataset.")
-            st.dataframe(mapping_df.head(20), use_container_width=True)
+            st.dataframe(df.head(50), use_container_width=True)
+            
+    elif module == "🔍 Master Stock Explorer":
+        st.subheader("Complete Stock & Industry Database")
+        selected_ind = st.selectbox("Select Industry:", ["All"] + list(df['Industry'].dropna().unique()))
+        search_query = st.text_input("Search Company Name or Ticker:")
+        
+        res = df if selected_ind == "All" else df[df['Industry'] == selected_ind]
+        if search_query:
+            res = res[res['Name'].str.contains(search_query, case=False, na=False) | res['NSE Code'].str.contains(search_query, case=False, na=False)]
+            
+        st.write(f"Results: **{len(res)}** companies")
+        st.dataframe(res, use_container_width=True)
 
 except Exception as e:
-    st.error(f"Error loading dashboard data: {e}")
+    st.error(f"Dashboard Error: {e}")
