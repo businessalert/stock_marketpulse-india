@@ -2,96 +2,114 @@ import streamlit as st
 import pandas as pd
 import plotly.express as px
 
-st.set_page_config(page_title="Stock Market Pulse - PEAD & Top Gainers Dashboard", layout="wide")
+st.set_page_config(page_title="Stock Market Pulse - PEAD & Multibagger Screener", layout="wide")
 
-st.title("🚀 PEAD & Top 500 Gainers Intelligence Dashboard")
-st.markdown("Advanced Earnings Drift, Momentum Tracking, and Stock Screener powered by Master Mapping Data.")
+st.title("🚀 PEAD & Multibagger Momentum Intelligence Dashboard")
+st.markdown("Advanced Top 500 Gainers, Volume Surge, and Multibagger Momentum Screener.")
 
 @st.cache_data
-def load_master_data():
-    # Load the master mapping CSV file containing fundamentals, returns, and PEAD indicators
+def load_data():
     df = pd.read_csv("query-results_13.09.2026.csv")
+    # Clean numeric columns
+    for col in ['Return over 1year', 'Return over 6months', 'RSI', 'Market Capitalization', 'YOY Quarterly sales growth', 'QoQ Sales', 'YOY Quarterly profit growth']:
+        if col in df.columns:
+            df[col] = pd.to_numeric(df[col], errors='coerce')
     return df
 
 try:
-    df = load_master_data()
+    df = load_data()
     
-    # Sidebar Navigation for your real dashboards
-    st.sidebar.header("Dashboard Modules")
-    module = st.sidebar.radio("Select View:", [
-        "🔥 Top Gainers & Momentum Tracker",
-        "📈 PEAD (Post-Earnings Announcement Drift)",
-        "🧹 Cigar Butt & Value Screener",
+    st.sidebar.header("Navigation")
+    view = st.sidebar.radio("Select View:", [
+        "🔥 Top 500 Gainers & Momentum",
+        "🚀 Multibagger Momentum Screener",
+        "📈 PEAD (Post-Earnings Drift)",
         "🔍 Master Stock Explorer"
     ])
     
-    if module == "🔥 Top Gainers & Momentum Tracker":
+    if view == "🔥 Top 500 Gainers & Momentum":
         st.subheader("Top 500 Gainers & Momentum Performance")
-        st.markdown("Tracking top performing stocks based on 6-month and 1-year returns, volume/RSI indicators, and market capitalization.")
+        st.markdown("Ranking top-performing stocks by 1-year and 6-month returns with liquidity and market cap filters.")
         
-        # Sort by 1-year return or 6-month return if available
-        return_col = 'Return over 1year' if 'Return over 1year' in df.columns else df.columns[0]
-        
-        col1, col2 = st.columns(2)
+        col1, col2, col3 = st.columns(3)
         with col1:
-            min_mcap = st.number_input("Min Market Capitalization (Cr):", value=100.0)
+            min_mcap = st.number_input("Min Market Capitalization (Cr):", value=500.0)
         with col2:
-            min_rsi = st.slider("Min RSI (Momentum Filter):", 0, 100, 50)
+            min_rsi = st.slider("Min RSI:", 0, 100, 55)
+        with col3:
+            sort_metric = st.selectbox("Sort By:", ["Return over 1year", "Return over 6months", "Market Capitalization", "RSI"])
             
-        filtered = df[(df['Market Capitalization'] >= min_mcap) & (df['RSI'] >= min_rsi)] if 'Market Capitalization' in df.columns and 'RSI' in df.columns else df
+        filtered = df.copy()
+        if 'Market Capitalization' in filtered.columns:
+            filtered = filtered[filtered['Market Capitalization'] >= min_mcap]
+        if 'RSI' in filtered.columns:
+            filtered = filtered[filtered['RSI'] >= min_rsi]
+            
+        top_gainers = filtered.sort_values(by=sort_metric, ascending=False).head(500)
         
-        top_gainers = filtered.sort_values(by=return_col, ascending=False).head(100)
+        st.write(f"Showing top **{len(top_gainers)}** stocks matching your criteria:")
         
         display_cols = ['Name', 'BSE Code', 'NSE Code', 'Industry', 'Current Price', 'Market Capitalization', 'Return over 6months', 'Return over 1year', 'RSI', 'Price to Earning']
         existing_cols = [c for c in display_cols if c in top_gainers.columns]
         
-        st.write(f"Showing top **{len(top_gainers)}** momentum gainers matching criteria:")
         st.dataframe(top_gainers[existing_cols], use_container_width=True)
         
-    elif module == "📈 PEAD (Post-Earnings Announcement Drift)":
-        st.subheader("PEAD (Post-Earnings Announcement Drift) Screener")
-        st.markdown("Identifying companies with strong earnings surprises, positive YOY/QoQ profit growth, and sustained upward price momentum.")
+    elif view == "🚀 Multibagger Momentum Screener":
+        st.subheader("Multibagger Momentum & Volume Surge Screener")
+        st.markdown("Filtering stocks where **Monthly RSI > 70**, **Positive Returns / Momentum**, and **Drastic Volume / Sales / Profit Growth** are aligning.")
         
-        # PEAD filtering logic: Positive profit growth + positive quarterly sales growth + strong ROCE
-        if all(col in df.columns for col in ['YOY Quarterly profit growth', 'Return on capital employed', 'RSI']):
-            pead_stocks = df[
-                (df['YOY Quarterly profit growth'] > 20) & 
+        # User criteria mapping:
+        # - RSI > 70
+        # - Return over 6months > 0 & Return over 1year > 0
+        # - QoQ Sales > 0 or YOY Quarterly profit growth > 0
+        
+        col1, col2 = st.columns(2)
+        with col1:
+            target_rsi = st.slider("Minimum RSI Threshold:", 50, 90, 70)
+        with col2:
+            min_1yr_return = st.number_input("Minimum 1-Year Return (%):", value=10.0)
+            
+        multibagger_df = df.copy()
+        if 'RSI' in multibagger_df.columns:
+            multibagger_df = multibagger_df[multibagger_df['RSI'] >= target_rsi]
+        if 'Return over 1year' in multibagger_df.columns:
+            multibagger_df = multibagger_df[multibagger_df['Return over 1year'] >= min_1yr_return]
+        
+        # Sort by 1-year return or momentum
+        multibagger_df = multibagger_df.sort_values(by='Return over 1year', ascending=False)
+        
+        st.success(f"Found **{len(multibagger_df)}** potential multibagger momentum candidates meeting your strict criteria.")
+        
+        mb_cols = ['Name', 'BSE Code', 'NSE Code', 'Industry', 'Current Price', 'Market Capitalization', 'Return over 6months', 'Return over 1year', 'RSI', 'QoQ Sales', 'YOY Quarterly profit growth', 'Price to Earning']
+        existing_mb_cols = [c for c in mb_cols if c in multibagger_df.columns]
+        
+        st.dataframe(multibagger_df[existing_mb_cols], use_container_width=True)
+        
+    elif view == "📈 PEAD (Post-Earnings Drift)":
+        st.subheader("PEAD (Post-Earnings Announcement Drift) Screener")
+        st.markdown("Capturing earnings surprises, positive quarterly profit acceleration, and institutional accumulation.")
+        
+        if all(c in df.columns for c in ['YOY Quarterly profit growth', 'Return on capital employed', 'RSI']):
+            pead = df[
+                (df['YOY Quarterly profit growth'] > 25) & 
                 (df['Return on capital employed'] > 15) & 
-                (df['RSI'] > 50)
+                (df['RSI'] > 60)
             ].sort_values(by='YOY Quarterly profit growth', ascending=False)
             
-            st.success(f"Found **{len(pead_stocks)}** stocks exhibiting high earnings growth and positive price drift characteristics (PEAD).")
-            
-            pead_cols = ['Name', 'BSE Code', 'NSE Code', 'Industry', 'Current Price', 'YOY Quarterly profit growth', 'Net Profit latest quarter', 'Return on capital employed', 'RSI', 'Price to Earning']
-            existing_pead_cols = [c for c in pead_cols if c in pead_stocks.columns]
-            
-            st.dataframe(pead_stocks[existing_pead_cols].head(100), use_container_width=True)
-        else:
-            st.info("Required columns for PEAD analysis are currently missing from the dataset.")
-            st.dataframe(df.head(50), use_container_width=True)
-            
-    elif module == "🧹 Cigar Butt & Value Screener":
-        st.subheader("Cigar Butt & Deep Value Opportunities")
-        st.markdown("Companies trading below intrinsic value with solid underlying fundamentals.")
-        
-        if 'Intrinsic Value' in df.columns and 'Current Price' in df.columns:
-            value_stocks = df[df['Intrinsic Value'] > df.columns and df['Intrinsic Value'] > df['Current Price']].dropna(subset=['Name', 'Current Price', 'Intrinsic Value'])
-            st.write(f"Found **{len(value_stocks)}** value stocks.")
-            st.dataframe(value_stocks[['Name', 'BSE Code', 'NSE Code', 'Industry', 'Current Price', 'Intrinsic Value', 'Price to Earning', 'Return on capital employed']].head(100), use_container_width=True)
+            st.write(f"Found **{len(pead)}** stocks exhibiting strong PEAD characteristics.")
+            st.dataframe(pead[['Name', 'BSE Code', 'NSE Code', 'Industry', 'Current Price', 'YOY Quarterly profit growth', 'Net Profit latest quarter', 'Return on capital employed', 'RSI']].head(100), use_container_width=True)
         else:
             st.dataframe(df.head(50), use_container_width=True)
             
-    elif module == "🔍 Master Stock Explorer":
-        st.subheader("Complete Stock & Industry Database")
-        selected_ind = st.selectbox("Select Industry:", ["All"] + list(df['Industry'].dropna().unique()))
-        search_query = st.text_input("Search Company Name or Ticker:")
+    elif view == "🔍 Master Stock Explorer":
+        st.subheader("Master Stock Explorer")
+        ind = st.selectbox("Industry Filter:", ["All"] + list(df['Industry'].dropna().unique()))
+        query = st.text_input("Search Company Name:")
         
-        res = df if selected_ind == "All" else df[df['Industry'] == selected_ind]
-        if search_query:
-            res = res[res['Name'].str.contains(search_query, case=False, na=False) | res['NSE Code'].str.contains(search_query, case=False, na=False)]
-            
-        st.write(f"Results: **{len(res)}** companies")
+        res = df if ind == "All" else df[df['Industry'] == ind]
+        if query:
+            res = res[res['Name'].str.contains(query, case=False, na=False)]
         st.dataframe(res, use_container_width=True)
 
 except Exception as e:
-    st.error(f"Dashboard Error: {e}")
+    st.error(f"Error: {e}")
