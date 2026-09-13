@@ -88,4 +88,3 @@ if not df_results.empty:
     st.dataframe(df_sorted, use_container_width=True)
 else:
     st.warning("No live stocks currently match all 3 strict parameters in this batch. Try expanding the ticker list or adjusting the volume multiplier.")
-
