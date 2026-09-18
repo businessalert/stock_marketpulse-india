@@ -14,19 +14,15 @@ st.set_page_config(
 
 @st.cache_data(ttl=3600)
 def load_repo_csv():
-  """Automatically searches and loads the CSV file from the repository directory."""
+  """Automatically loads the full stock universe CSV from the repository."""
   csv_files = glob.glob("*.csv")
   if not csv_files:
     return None
 
-  # Load the first available CSV (e.g., query-results_13.09.2026.csv)
   file_path = csv_files[0]
   df = pd.read_csv(file_path)
-
-  # Normalize column names (lowercase and strip whitespace)
   df.columns = df.columns.str.strip().str.lower()
 
-  # Map alternate column names gracefully
   if "symbol" in df.columns and "ticker" not in df.columns:
     df.rename(columns={"symbol": "ticker"}, inplace=True)
   if "sector" in df.columns and "industry" not in df.columns:
@@ -37,13 +33,9 @@ def load_repo_csv():
 
 @st.cache_data(ttl=3600)
 def fetch_dynamic_stock_data(ticker_df: pd.DataFrame) -> pd.DataFrame:
-  """Takes the repository DataFrame and dynamically fetches all pricing,
-
-  volume, and metric data via yfinance.
-  """
+  """Dynamically fetches pricing and technical indicators for the universe."""
   data_rows = []
 
-  # Ensure ticker column exists
   ticker_col = "ticker" if "ticker" in ticker_df.columns else ticker_df.columns[0]
   industry_col = (
       "industry"
@@ -51,7 +43,11 @@ def fetch_dynamic_stock_data(ticker_df: pd.DataFrame) -> pd.DataFrame:
       else (ticker_df.columns[1] if len(ticker_df.columns) > 1 else None)
   )
 
-  for _, row in ticker_df.iterrows():
+  # Progress bar for scanning large universe
+  progress_bar = st.progress(0)
+  total_stocks = len(ticker_df)
+
+  for idx, row in ticker_df.iterrows():
     ticker = str(row[ticker_col]).strip().upper()
     industry = (
         str(row[industry_col])
@@ -59,8 +55,13 @@ def fetch_dynamic_stock_data(ticker_df: pd.DataFrame) -> pd.DataFrame:
         else "General/Unmapped"
     )
 
+    # Update progress
+    progress_bar.progress(
+        min((idx + 1) / total_stocks, 1.0),
+        text=f"Scanning universe ({idx + 1}/{total_stocks}): {ticker}",
+    )
+
     try:
-      # Append '.NS' for NSE stocks if not already present
       formatted_ticker = ticker
       if not formatted_ticker.endswith(".NS") and not formatted_ticker.endswith(
           ".BO"
@@ -70,28 +71,38 @@ def fetch_dynamic_stock_data(ticker_df: pd.DataFrame) -> pd.DataFrame:
       stock = yf.Ticker(formatted_ticker)
       hist = stock.history(period="6mo")
 
-      if hist.empty or len(hist) < 50:
+      if hist.empty or len(hist) < 30:
         continue
 
-      # Dynamically compute technical metrics from market history
       current_close = hist["Close"].iloc[-1]
-      vma_50 = hist["Volume"].tail(50).mean()
+      vma_50 = (
+          hist["Volume"].tail(50).mean()
+          if len(hist) >= 50
+          else hist["Volume"].mean()
+      )
       current_volume = hist["Volume"].iloc[-1]
 
-      # Simple RSI-14 calculation
+      # RSI-14 calculation
       delta = hist["Close"].diff()
       gain = (delta.where(delta > 0, 0)).rolling(window=14).mean()
       loss = (-delta.where(delta < 0, 0)).rolling(window=14).mean()
       rs = gain / loss
-      rsi_14 = 100 - (100 / (1 + rs)).iloc[-1]
+      rsi_val = 100 - (100 / (1 + rs))
+      rsi_14 = rsi_val.iloc[-1] if not rsi_val.empty else 50.0
 
-      # Recent 20-day resistance box (consolidation high)
-      consolidation_high = hist["High"].tail(20).max()
+      consolidation_high = (
+          hist["High"].tail(20).max()
+          if len(hist) >= 20
+          else hist["High"].max()
+      )
 
-      # Fetch fundamentals or set safe defaults
+      # Safe fundamental extraction with realistic default mapping
       info = stock.info
-      roce = info.get("returnOnCapitalEmployed", info.get("roce", 15.0))
-      roce = (roce * 100) if roce and roce < 2.0 else (roce or 15.0)
+      roce = info.get("returnOnCapitalEmployed", info.get("roce", None))
+      if roce is not None:
+        roce = roce * 100 if roce < 2.0 else roce
+      else:
+        roce = 14.0  # Default baseline to prevent blank dropouts
 
       data_rows.append({
           "ticker": ticker,
@@ -99,39 +110,40 @@ def fetch_dynamic_stock_data(ticker_df: pd.DataFrame) -> pd.DataFrame:
           "close": round(current_close, 2),
           "volume": int(current_volume),
           "vma_50": int(vma_50),
-          "delivery_pct": 70.0,
-          "rsi_14": round(rsi_14, 2),
+          "delivery_pct": 65.0,  # Baseline institutional delivery proxy
+          "rsi_14": round(rsi_14, 2) if not np.isnan(rsi_14) else 50.0,
           "consolidation_high": round(consolidation_high, 2),
           "roce": round(roce, 2),
       })
     except Exception:
       continue
 
+  progress_bar.empty()
   return pd.DataFrame(data_rows)
 
 
 def process_multibagger_funnel(df: pd.DataFrame) -> pd.DataFrame:
-  """Processes dynamically fetched data through the multi-tiered funnel."""
+  """Applies the multi-tiered funnel logic across the full dataset."""
   if df.empty:
     return df
 
   data = df.copy()
 
-  # Stage 1 & 2: Quantitative Quality & Accumulation Filter
+  # Stage 1 & 2: Accumulation Gate (ROCE > 12%, Price near breakout base)
   data["passes_accumulation"] = (
       (data["roce"] >= 12.0)
       & (data["delivery_pct"] >= 60.0)
-      & (data["close"] >= data["consolidation_high"] * 0.95)
+      & (data["close"] >= data["consolidation_high"] * 0.90)
   )
 
   data["lifecycle_phase"] = np.where(
       data["passes_accumulation"], "Accumulation Phase", "Radar Pool"
   )
 
-  # Stage 3: Breakout & Momentum Trigger (Execution Gate)
-  price_breakout = data["close"] >= (data["consolidation_high"] * 1.01)
-  volume_surge = data["volume"] >= (data["vma_50"] * 2.0)
-  momentum_rsi = (data["rsi_14"] >= 55.0) & (data["rsi_14"] <= 80.0)
+  # Stage 3: Growth Phase Trigger (Volume Surge + Momentum Breakout)
+  price_breakout = data["close"] >= (data["consolidation_high"] * 1.005)
+  volume_surge = data["volume"] >= (data["vma_50"] * 1.5)
+  momentum_rsi = (data["rsi_14"] >= 50.0) & (data["rsi_14"] <= 85.0)
 
   data["is_transition_ready"] = (
       data["passes_accumulation"] & price_breakout & volume_surge & momentum_rsi
@@ -144,39 +156,35 @@ def process_multibagger_funnel(df: pd.DataFrame) -> pd.DataFrame:
 # --- Streamlit UI Layout ---
 st.title("🚀 Dynamic Multibagger Funnel Dashboard")
 st.markdown(
-    "Automatically loads your stock list and industry mapping directly from your"
-    " repository CSV file."
+    "Institutional screening engine evaluating your entire repository stock"
+    " universe."
 )
 
-# Automatically load CSV from repository
 input_ticker_df = load_repo_csv()
 
 if input_ticker_df is not None:
-  st.sidebar.success("📂 Repository CSV Loaded Successfully!")
-  st.sidebar.write(
-      f"Loaded **{len(input_ticker_df)}** tickers from your source file."
+  st.sidebar.success(
+      f"📂 Loaded Universe: {len(input_ticker_df)} stocks from repository."
   )
 
-  if st.sidebar.button("Run Funnel Scan"):
-    with st.spinner(
-        "Fetching live market data and mapping dynamic indicators..."
-    ):
+  if st.sidebar.button("Run Full Funnel Scan"):
+    with st.spinner("Processing market universe through multi-tier funnel..."):
       raw_fetched_df = fetch_dynamic_stock_data(input_ticker_df)
       processed_df = process_multibagger_funnel(raw_fetched_df)
       st.session_state["processed_df"] = processed_df
 else:
-  st.sidebar.error(
-      "❌ No CSV file found in the repository. Please ensure your list CSV is"
-      " committed."
-  )
+  st.sidebar.error("❌ Repository CSV not found.")
 
-# Load from session state if available
 if "processed_df" in st.session_state:
   processed_df = st.session_state["processed_df"]
 
-  col1, col2, col3 = st.columns(3)
-  col1.metric("Total Universe Scanned", len(processed_df))
+  col1, col2, col3, col4 = st.columns(4)
+  col1.metric("Total Universe Processed", len(processed_df))
   col2.metric(
+      "Radar Pool",
+      len(processed_df[processed_df["lifecycle_phase"] == "Radar Pool"]),
+  )
+  col3.metric(
       "Accumulation Phase",
       len(
           processed_df[
@@ -184,7 +192,7 @@ if "processed_df" in st.session_state:
           ]
       ),
   )
-  col3.metric(
+  col4.metric(
       "Growth Phase (Ready)",
       len(processed_df[processed_df["is_transition_ready"]]),
   )
@@ -207,12 +215,9 @@ if "processed_df" in st.session_state:
   if not growth_alerts.empty:
     st.error(
         "🚨 **Execution Alert:** Breakout triggers cleared for:"
-        f" {', '.join(growth_alerts['ticker'].tolist())}"
+        f" {', '.join(growth_alerts['ticker'].tolist()[:10])}"
     )
   else:
     st.info("ℹ️ No stocks currently meeting full Growth Phase breakout triggers.")
 else:
-  st.info(
-      "👈 Click 'Run Funnel Scan' in the sidebar to process your repository"
-      " stock list."
-  )
+  st.info("👈 Click 'Run Full Funnel Scan' in the sidebar to start processing.")
