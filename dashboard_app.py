@@ -1,291 +1,137 @@
-import streamlit as st
-import pandas as pd
 import numpy as np
-import yfinance as yf
-import ta
-from concurrent.futures import ThreadPoolExecutor, as_completed
+import pandas as pd
+import streamlit as st
 
-st.set_page_config(page_title="Live Market Scanner Suite", layout="wide")
+st.set_page_config(
+    page_title="Advanced Multibagger & Breakout Screener", layout="wide"
+)
 
-st.title("⚡ Live Stock Market Pulse & Multibagger Intelligence Suite")
-st.markdown("Advanced Multi-Strategy Screener & Institutional Flow Analytics with Smart Money Accumulation Filters.")
+st.title("🎯 Advanced Multibagger Breakout & Accumulation Dashboard")
+st.markdown(
+    "Combined Engine: Active Momentum Breakouts + Pre-Breakout Accumulation Radar"
+)
 
-# Sidebar Controls
-st.sidebar.header("⚙️ Scanner Settings")
-max_scan = st.sidebar.slider("Max CSV stocks to scan per batch:", min_value=50, max_value=500, value=100, step=50)
+# Sidebar Configuration for Thresholds
+st.sidebar.header("Engine Parameters")
+rsi_min = st.sidebar.slider("RSI Min (Active Breakout)", 50, 75, 69)
+rsi_max = st.sidebar.slider("RSI Max (Active Breakout)", 75, 95, 80)
+min_promoter_holding = st.sidebar.slider(
+    "Min Promoter Holding (%)", 0, 90, 50
+)
+min_consolidation_weeks = st.sidebar.slider(
+    "Min Consolidation Weeks (Accumulation)", 1, 12, 4
+)
 
+
+# Mock data loader or CSV connector function
 @st.cache_data
-def load_csv_directory():
-    try:
-        return pd.read_csv("query-results_13.09.2026.csv")
-    except Exception as e:
-        st.error(f"Error loading CSV directory: {e}")
-        return pd.DataFrame()
+def load_screener_data():
+  # In your actual implementation, replace this with your CSV loading logic:
+  # df = pd.read_csv("your_master_list.csv")
+  # Below is the schema structure required to drive both engines:
+  data = {
+      "Name": [
+          "Fonebox Retail",
+          "Anand Rathi Wealth",
+          "CP Capital",
+          "Castrol India",
+          "Foseco India",
+          "Arrow Greentech",
+          "ACME Solar Hold.",
+          "Anthem Bioscience",
+          "AMD Industries",
+          "GNFC",
+      ],
+      "Ticker": [
+          "FONEBOX",
+          "ANANDRATHI",
+          "CPCAP",
+          "CASTROLIND",
+          "FOSECOIND",
+          "ARROWGREEN",
+          "ACMESOLAR",
+          "ANTHEM",
+          "AMDIND",
+          "GNFC",
+      ],
+      "Industry": [
+          "Specialty Retail",
+          "Financial Products",
+          "NBFC",
+          "Lubricants",
+          "Specialty Chemicals",
+          "Packaging",
+          "Power Generation",
+          "Biotechnology",
+          "Packaging",
+          "Commodity Chemicals",
+      ],
+      "RSI": [72.5, 68.0, 75.1, 45.0, 78.4, 62.0, 55.0, 81.0, 48.0, 70.2],
+      "Volume_Surge": [True, False, True, False, True, False, False, True, False, True],
+      "ROC": [5.2, -1.1, 12.4, -3.2, 8.5, 1.2, 0.5, 14.1, -2.0, 3.4],
+      "OBV_Trend": [
+          "Rising",
+          "Flat",
+          "Rising",
+          "Falling",
+          "Rising",
+          "Rising",
+          "Flat",
+          "Rising",
+          "Falling",
+          "Rising",
+      ],
+      "Price_Consolidation_Weeks": [5, 2, 6, 1, 4, 6, 3, 2, 1, 5],
+      "Promoter_Holding": [72.0, 65.0, 55.0, 51.0, 75.0, 68.0, 80.0, 60.0, 58.0, 57.0],
+      "Pledged_Percentage": [0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0],
+      "CFO_Positive": [
+          True,
+          True,
+          True,
+          True,
+          True,
+          True,
+          False,
+          True,
+          True,
+          True,
+      ],
+  }
+  return pd.DataFrame(data)
 
-csv_master_df = load_csv_directory()
 
-# Helper to resolve ticker symbol from CSV
-def get_yf_symbol(row, ticker_col):
-    raw_ticker = str(row[ticker_col]).strip()
-    if not raw_ticker or raw_ticker.lower() == 'nan':
-        return None
-    clean_symbol = raw_ticker.upper().replace('&', '-')
-    yf_symbol = f"{clean_symbol}.NS" if not clean_symbol.endswith(".NS") and not clean_symbol.endswith(".BO") else clean_symbol
-    return clean_symbol, yf_symbol
+df_master = load_screener_data()
 
-# 1. Weekly Breakout Engine (Strict 3-Parameter)
-def process_ticker_weekly(row, ticker_col):
-    res_sym = get_yf_symbol(row, ticker_col)
-    if not res_sym: return None
-    clean_symbol, yf_symbol = res_sym
-    
-    try:
-        stock = yf.Ticker(yf_symbol)
-        hist = stock.history(period="1y", interval="1wk")
-        if hist.empty and not yf_symbol.endswith(".BO"):
-            yf_symbol = f"{clean_symbol}.BO"
-            stock = yf.Ticker(yf_symbol)
-            hist = stock.history(period="1y", interval="1wk")
-            
-        if len(hist) >= 20:
-            close = hist['Close']
-            volume = hist['Volume']
-            
-            rsi = ta.momentum.rsi(close, window=14).iloc[-1]
-            roc = ta.momentum.roc(close, window=18).iloc[-1]
-            vol_sma_10 = volume.rolling(window=10).mean().iloc[-1]
-            current_vol = volume.iloc[-1]
-            volume_surging = current_vol > (1.2 * vol_sma_10) if vol_sma_10 > 0 else False
-            current_price = close.iloc[-1]
-            
-            if (69.0 <= rsi <= 80.0) and volume_surging and (roc > 0.0):
-                return {
-                    'Name': row.get('Name', clean_symbol),
-                    'Ticker': clean_symbol,
-                    'Industry': row.get('Industry', 'Unknown'),
-                    'Current Price': round(current_price, 2),
-                    'Weekly RSI (14)': round(rsi, 2),
-                    'Price ROC (18)': round(roc, 2),
-                    'Volume Surge Ratio': f"{round(current_vol / vol_sma_10, 2)}x Avg"
-                }
-    except Exception:
-        pass
-    return None
-
-# 2. Monthly RSI Engine (Strictly Monthly Candles, RSI 14 between 69 and 75)
-def process_ticker_monthly(row, ticker_col):
-    res_sym = get_yf_symbol(row, ticker_col)
-    if not res_sym: return None
-    clean_symbol, yf_symbol = res_sym
-    
-    try:
-        stock = yf.Ticker(yf_symbol)
-        hist = stock.history(period="max", interval="1mo")
-        if hist.empty and not yf_symbol.endswith(".BO"):
-            yf_symbol = f"{clean_symbol}.BO"
-            stock = yf.Ticker(yf_symbol)
-            hist = stock.history(period="max", interval="1mo")
-            
-        if len(hist) >= 20:
-            close = hist['Close']
-            rsi_monthly = ta.momentum.rsi(close, window=14).iloc[-1]
-            current_price = close.iloc[-1]
-            
-            if 69.0 <= rsi_monthly <= 75.0:
-                return {
-                    'Name': row.get('Name', clean_symbol),
-                    'Ticker': clean_symbol,
-                    'Industry': row.get('Industry', 'Unknown'),
-                    'Current Price': round(current_price, 2),
-                    'Monthly RSI (14)': round(rsi_monthly, 2)
-                }
-    except Exception:
-        pass
-    return None
-
-# 3. Legacy / Alternate Ranking Dashboard (RSI 70-95 & Multi-Factor Scoring)
-def process_ticker_legacy_ranked(row, ticker_col):
-    res_sym = get_yf_symbol(row, ticker_col)
-    if not res_sym: return None
-    clean_symbol, yf_symbol = res_sym
-    
-    try:
-        stock = yf.Ticker(yf_symbol)
-        hist = stock.history(period="1y", interval="1wk")
-        if hist.empty and not yf_symbol.endswith(".BO"):
-            yf_symbol = f"{clean_symbol}.BO"
-            stock = yf.Ticker(yf_symbol)
-            hist = stock.history(period="1y", interval="1wk")
-            
-        if len(hist) >= 20:
-            close = hist['Close']
-            volume = hist['Volume']
-            
-            rsi = ta.momentum.rsi(close, window=14).iloc[-1]
-            roc = ta.momentum.roc(close, window=18).iloc[-1]
-            mfi = ta.volume.money_flow_index(hist['High'], hist['Low'], close, volume, window=14).iloc[-1]
-            
-            ret_1m = ((close.iloc[-1] - close.iloc[-4]) / close.iloc[-4]) * 100 if len(close) >= 4 else 0.0
-            ret_3m = ((close.iloc[-1] - close.iloc[-12]) / close.iloc[-12]) * 100 if len(close) >= 12 else 0.0
-            recent_perf = (ret_1m + ret_3m) / 2.0
-            current_price = close.iloc[-1]
-            
-            if (70.0 <= rsi <= 95.0) and (roc > 0.0):
-                score = (rsi * 0.4) + (max(roc, 0) * 0.3) + (max(recent_perf, 0) * 0.2) + (mfi * 0.1)
-                return {
-                    'Name': row.get('Name', clean_symbol),
-                    'Ticker': clean_symbol,
-                    'Industry': row.get('Industry', 'Unknown'),
-                    'Composite Score': round(score, 2),
-                    'Current Price': round(current_price, 2),
-                    'Weekly RSI (14)': round(rsi, 2),
-                    'Price ROC (18)': round(roc, 2),
-                    'Money Flow Index': round(mfi, 2)
-                }
-    except Exception:
-        pass
-    return None
-
-# 4. NEW: Smart Money Accumulation & Multi-Bagger Scorecard Engine
-def process_ticker_accumulation(row, ticker_col):
-    res_sym = get_yf_symbol(row, ticker_col)
-    if not res_sym: return None
-    clean_symbol, yf_symbol = res_sym
-    
-    try:
-        stock = yf.Ticker(yf_symbol)
-        hist = stock.history(period="6mo", interval="1wk")
-        if hist.empty and not yf_symbol.endswith(".BO"):
-            yf_symbol = f"{clean_symbol}.BO"
-            stock = yf.Ticker(yf_symbol)
-            hist = stock.history(period="6mo", interval="1wk")
-            
-        if len(hist) >= 15:
-            close = hist['Close']
-            volume = hist['Volume']
-            high = hist['High']
-            low = hist['Low']
-            
-            # Identify quiet accumulation: Volume spikes (> 1.5x average) while price range is coiling / consolidating (RSI between 45 and 65)
-            rsi = ta.momentum.rsi(close, window=14).iloc[-1]
-            vol_sma = volume.rolling(window=8).mean().iloc[-1]
-            current_vol = volume.iloc[-1]
-            
-            # Volatility contraction proxy: Check if recent weekly ranges are tightening
-            price_range_pct = ((high - low) / close) * 100
-            avg_range = price_range_pct.rolling(window=8).mean().iloc[-1]
-            recent_range = price_range_pct.iloc[-1]
-            is_coiling = recent_range <= (avg_range * 1.1)
-            
-            volume_accumulation = current_vol > (1.4 * vol_sma) if vol_sma > 0 else False
-            current_price = close.iloc[-1]
-            
-            # Filter for pre-breakout smart money accumulation zone
-            if (45.0 <= rsi <= 65.0) and volume_accumulation and is_coiling:
-                accumulation_score = round(current_vol / vol_sma * 50 + (70 - abs(rsi - 55)), 2)
-                return {
-                    'Name': row.get('Name', clean_symbol),
-                    'Ticker': clean_symbol,
-                    'Industry': row.get('Industry', 'Unknown'),
-                    'Accumulation Score': accumulation_score,
-                    'Current Price': round(current_price, 2),
-                    'Weekly RSI (Base Zone)': round(rsi, 2),
-                    'Volume Spike Ratio': f"{round(current_vol / vol_sma, 2)}x"
-                }
-    except Exception:
-        pass
-    return None
-
-# Caching Data Pulls
-@st.cache_data(ttl=3600)
-def fetch_scan_results(df_master, limit, mode):
-    if df_master.empty:
-        return pd.DataFrame()
-    ticker_col = next((col for col in ['NSE Code', 'BSE Code', 'Symbol', 'Ticker'] if col in df_master.columns), None)
-    if not ticker_col:
-        return pd.DataFrame()
-        
-    subset_df = df_master.head(limit)
-    matched_stocks = []
-    
-    if mode == 'weekly':
-        worker_func = process_ticker_weekly
-    elif mode == 'monthly':
-        worker_func = process_ticker_monthly
-    elif mode == 'ranked':
-        worker_func = process_ticker_legacy_ranked
-    else:
-        worker_func = process_ticker_accumulation
-        
-    with ThreadPoolExecutor(max_workers=10) as executor:
-        futures = [executor.submit(worker_func, row, ticker_col) for _, row in subset_df.iterrows()]
-        for future in as_completed(futures):
-            res = future.result()
-            if res:
-                matched_stocks.append(res)
-                
-    return pd.DataFrame(matched_stocks)
-
-# Navigation Dashboards (4 Tabs)
-tab1, tab2, tab3, tab4 = st.tabs([
-    "⚡ Weekly Breakout Hunter", 
-    "🎯 Monthly Momentum Scan", 
-    "📊 Advanced Multi-Factor Rank",
-    "🕵️‍♂️ Smart Money Accumulation (Pre-Breakout)"
-])
+# Tabs to separate Active Momentum vs Pre-Breakout Accumulation
+tab1, tab2 = st.tabs(
+    ["🚀 Active Breakout Candidates", "🔍 Pre-Breakout Accumulation Radar"]
+)
 
 with tab1:
-    st.subheader("Leading Indicators & Breakout Hunter (Live Weekly Candles)")
-    st.markdown("Breakout Zone: Weekly RSI (69–80), Volume Surge (>1.2x 10W MA), and Positive Price Velocity (ROC > 0).")
-    
-    with st.spinner("Scanning weekly exchange feeds in parallel..."):
-        df_weekly = fetch_scan_results(csv_master_df, max_scan, 'weekly')
-        
-    if not df_weekly.empty:
-        df_w_sorted = df_weekly.sort_values(by='Weekly RSI (14)', ascending=False).reset_index(drop=True)
-        st.success(f"Found **{len(df_w_sorted)}** qualified weekly breakout candidates.")
-        st.dataframe(df_w_sorted, use_container_width=True)
-    else:
-        st.warning("No stocks match the strict weekly parameters in this batch window.")
+  st.subheader("Active Momentum Engine (RSI + Volume Surge + ROC)")
+  active_breakouts = df_master[
+      (df_master["RSI"] >= rsi_min)
+      & (df_master["RSI"] <= rsi_max)
+      & (df_master["Volume_Surge"] == True)
+      & (df_master["ROC"] > 0)
+  ]
+  st.info(f"Found {len(active_breakouts)} stocks matching active parameters.")
+  st.dataframe(active_breakouts, use_container_width=True)
 
 with tab2:
-    st.subheader("Monthly RSI Intelligence (Pure Monthly Ticker Evaluation)")
-    st.markdown("Filter Rule: **Monthly RSI (14)** calculated strictly from monthly historical charts, pinned between **69 and 75**.")
-    
-    with st.spinner("Fetching monthly historical feeds across CSV universe..."):
-        df_monthly = fetch_scan_results(csv_master_df, max_scan, 'monthly')
-        
-    if not df_monthly.empty:
-        df_m_sorted = df_monthly.sort_values(by='Monthly RSI (14)', ascending=False).reset_index(drop=True)
-        st.success(f"Found **{len(df_m_sorted)}** stocks meeting the Monthly RSI 69–75 criteria.")
-        st.dataframe(df_m_sorted, use_container_width=True)
-    else:
-        st.warning("No stocks match the Monthly RSI 69–75 filter in this batch window.")
-
-with tab3:
-    st.subheader("Advanced Multi-Strategy Screener & Institutional Flow Analytics")
-    st.markdown("Custom Multi-Factor Ranking Weights: RSI 14 (40%), Price ROC (30%), Recent Return (20%), MFI 14 (10%).")
-    
-    with st.spinner("Computing multi-factor rankings..."):
-        df_ranked = fetch_scan_results(csv_master_df, max_scan, 'ranked')
-        
-    if not df_ranked.empty:
-        df_ranked_sorted = df_ranked.sort_values(by='Composite Score', ascending=False).head(25).reset_index(drop=True)
-        st.success(f"Generated Top Ranked Selection (**{len(df_ranked_sorted)}** stocks).")
-        st.dataframe(df_ranked_sorted, use_container_width=True)
-    else:
-        st.warning("No stocks qualified for the advanced multi-factor ranking in this batch.")
-
-with tab4:
-    st.subheader("Smart Money Accumulation & Pre-Breakout Scorecard")
-    st.markdown("Identifies silent base-building: Coiling price ranges with heavy volume spikes while RSI remains in a healthy base zone (45–65) *before* the public breakout.")
-    
-    with st.spinner("Scanning for quiet institutional accumulation footprints..."):
-        df_accum = fetch_scan_results(csv_master_df, max_scan, 'accumulation')
-        
-    if not df_accum.empty:
-        df_accum_sorted = df_accum.sort_values(by='Accumulation Score', ascending=False).reset_index(drop=True)
-        st.success(f"Found **{len(df_accum_sorted)}** pre-breakout accumulation candidates.")
-        st.dataframe(df_accum_sorted, use_container_width=True)
-    else:
-        st.warning("No stocks match the smart money accumulation criteria in this batch window.")
+  st.subheader("Accumulation Radar (Catching Runners Before the Breakout)")
+  accumulation_radar = df_master[
+      (df_master["OBV_Trend"] == "Rising")
+      & (
+          df_master["Price_Consolidation_Weeks"]
+          >= min_consolidation_weeks
+      )
+      & (df_master["Promoter_Holding"] >= min_promoter_holding)
+      & (df_master["Pledged_Percentage"] == 0.0)
+      & (df_master["CFO_Positive"] == True)
+  ]
+  st.success(
+      f"Found {len(accumulation_radar)} stocks quietly accumulating under the"
+      " surface."
+  )
+  st.dataframe(accumulation_radar, use_container_width=True)
