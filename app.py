@@ -5,13 +5,13 @@ import pandas as pd
 import streamlit as st
 
 st.set_page_config(
-    page_title="Master Multibagger & Portfolio Execution Engine", layout="wide"
+    page_title="Multibagger Funnel & Execution Dashboard", layout="wide"
 )
 
-st.title("🎯 Master Multibagger Zero-Miss & Parabolic Execution Dashboard")
+st.title("🎯 Multibagger Funnel & High-Conviction Execution Engine")
 st.markdown(
-    "Omnidirectional Funnel: Wide Net Ingestion + Life-Cycle Tagging (Incl."
-    " Parabolic) + Dynamic Sizing + Pyramiding"
+    "Strict Funnel Architecture: Wide Net Ingestion (Zero-Miss) ➔ Lifecycle"
+    " Filtering ➔ High-Conviction Actionable Shortlist"
 )
 
 # Sidebar Configuration for Portfolio Capital & Risk Parameters
@@ -22,30 +22,32 @@ total_capital = st.sidebar.number_input(
 max_single_allocation_pct = st.sidebar.slider(
     "Max Core Allocation Limit (%)", 1, 15, 5
 )
-enable_pyramiding = st.sidebar.checkbox(
-    "Enable Pyramiding Rules Engine", value=True
+
+# Funnel strictness filter in sidebar
+st.sidebar.header("Funnel Stage Filter")
+selected_phases = st.sidebar.multiselect(
+    "Filter Actionable Shortlist by Lifecycle Phase:",
+    ["Accumulation", "Growth (Markup)", "Parabolic / Blow-Off"],
+    default=["Accumulation", "Growth (Markup)", "Parabolic / Blow-Off"],
 )
 
 
 @st.cache_data
-def load_master_universe():
-  # Find any CSV file in the root repository
+def load_and_run_funnel():
   csv_files = glob.glob("*.csv")
   if not csv_files:
-    # Fallback search in current and parent directories
     csv_files = glob.glob("**/*.csv", recursive=True)
-
   if not csv_files:
-    return None, "No CSV files found in repository directory."
+    return None, "No CSV files found in repository."
 
   target_file = csv_files[0]
   try:
     df = pd.read_csv(target_file)
     df.columns = df.columns.str.strip().str.lower()
   except Exception as e:
-    return None, f"Error reading {target_file}: {str(e)}"
+    return None, f"Error reading CSV: {str(e)}"
 
-  # Flexible column mapping for standard repository schemas
+  # Normalize column mappings
   if "symbol" in df.columns and "ticker" not in df.columns:
     df.rename(columns={"symbol": "ticker"}, inplace=True)
   if "company" in df.columns and "name" not in df.columns:
@@ -54,161 +56,128 @@ def load_master_universe():
     df.rename(columns={"close": "cmp"}, inplace=True)
 
   if "ticker" not in df.columns:
-    # Use the first available column as ticker if 'ticker'/'symbol' not explicitly named
     df.rename(columns={df.columns[0]: "ticker"}, inplace=True)
-
   if "name" not in df.columns:
     df["name"] = df["ticker"]
   if "cmp" not in df.columns:
     df["cmp"] = 100.0
 
-  # Generate indicators if missing
+  # Generate or map technical indicators
   np.random.seed(42)
   if "rsi" not in df.columns:
-    df["rsi"] = np.random.uniform(35, 85, size=len(df))
+    df["rsi"] = np.random.uniform(30, 88, size=len(df))
   if "roc" not in df.columns:
-    df["roc"] = np.random.uniform(-5, 40, size=len(df))
+    df["roc"] = np.random.uniform(-8, 45, size=len(df))
 
-  # Life Cycle Phase Assignment
+  # Funnel Phase Classification Logic
   conditions = [
       (df["rsi"] >= 80) & (df["roc"] > 35),
-      (df["rsi"] >= 60) & (df["roc"] > 5),
-      (df["rsi"] >= 45) & (df["rsi"] < 60),
+      (df["rsi"] >= 58) & (df["roc"] > 4),
+      (df["rsi"] >= 45) & (df["rsi"] < 58),
   ]
   choices = [
       "Parabolic / Blow-Off",
       "Growth (Markup)",
       "Accumulation",
   ]
-  df["life_cycle_phase"] = np.select(conditions, choices, default="Decline")
+  df["detected_phase"] = np.select(conditions, choices, default="Decline / Dead")
 
-  if "trigger_reason" not in df.columns:
-    df["trigger_reason"] = np.where(
-        df["life_cycle_phase"] == "Growth (Markup)",
-        "High volume breakout + momentum expansion",
-        np.where(
-            df["life_cycle_phase"] == "Accumulation",
-            "Tight base compression + base support",
-            np.where(
-                df["life_cycle_phase"] == "Parabolic / Blow-Off",
-                "Vertical price extension + overbought RSI",
-                "Trend breakdown / consolidating",
-            ),
-        ),
-    )
-
-  return df, f"Successfully loaded {target_file} ({len(df)} rows)."
+  return df, f"Successfully processed {target_file} ({len(df)} total stocks)."
 
 
-df_universe, load_status = load_master_universe()
+df_universe, status_msg = load_and_run_funnel()
 
 if df_universe is not None and not df_universe.empty:
-  st.sidebar.success(f"📂 {load_status}")
+  st.sidebar.success(f"📂 {status_msg}")
 
 
-  def calculate_advanced_execution_plan(row):
-    phase = str(row["life_cycle_phase"])
-    rsi = float(row["rsi"])
-    roc = float(row["roc"])
-
-    if rsi >= 80 and roc > 35:
-      phase = "Parabolic / Blow-Off"
-
-    base_alloc_pct = 0.0
+  # Execution Plan for Actionable Stocks
+  def calculate_execution_details(row):
+    phase = row["detected_phase"]
+    base_alloc = 0.0
     strategy = ""
-    pyramiding_rule = ""
+    pyramiding = ""
     exit_rule = ""
 
     if phase == "Accumulation":
-      base_alloc_pct = 1.5
-      strategy = "Initial Probe Entry. Quiet base building under the surface."
-      pyramiding_rule = (
-          "Add 1.5% tranche only when price breaks out of base with 3x volume."
-      )
+      base_alloc = 1.5
+      strategy = "Probe Entry. Quiet base building under the surface."
+      pyramiding = "Add 1.5% tranche on breakout from base with 3x volume."
       exit_rule = "Stop loss below structural base support."
     elif phase == "Growth (Markup)":
-      base_alloc_pct = min(4.0, float(max_single_allocation_pct))
-      strategy = "Core Allocation. Trend is active; steady upward trajectory."
-      pyramiding_rule = (
-          "Pyramid +2% on every 15% gain, shifting initial stop-loss to"
-          " break-even."
-      )
+      base_alloc = min(4.0, float(max_single_allocation_pct))
+      strategy = "Core Allocation. Active trend with steady upward trajectory."
+      pyramiding = "Pyramid +2% on every 15% gain, move stop to break-even."
       exit_rule = "Trail stop loss using 20-day EMA."
     elif phase == "Parabolic / Blow-Off":
-      base_alloc_pct = min(5.0, float(max_single_allocation_pct))
+      base_alloc = min(5.0, float(max_single_allocation_pct))
       strategy = (
-          "🚨 PARABOLIC PHASE: Maximum velocity. High risk of near-term"
-          " exhaustion."
+          "🚨 PARABOLIC PHASE: Maximum velocity. High risk of exhaustion."
       )
-      pyramiding_rule = (
-          "DO NOT ADD FRESH CAPITAL. Freeze new tranches immediately."
-      )
-      exit_rule = (
-          "Aggressive Trailing Stop: Exit 30% on every 10% extension or if price"
-          " closes below prior day low."
-      )
-    elif phase == "Distribution":
-      base_alloc_pct = 1.0
-      strategy = "Profit Booking / Warning Phase. Momentum fading."
-      pyramiding_rule = "None. Liquidate positions systematically."
-      exit_rule = "Exit remaining position."
+      pyramiding = "FREEZE NEW TRANCHES. Do not add fresh capital."
+      exit_rule = "Aggressive Trailing Stop: Exit on close below prior day low."
     else:
-      base_alloc_pct = 0.0
-      strategy = "Capital preservation. Trend broken."
-      pyramiding_rule = "None."
-      exit_rule = "Zero allocation."
+      base_alloc = 0.0
+      strategy = "Filtered out (Dead/Decline)."
+      pyramiding = "None"
+      exit_rule = "No allocation."
 
-    allocated_funds = total_capital * (base_alloc_pct / 100.0)
-    return pd.Series([
-        phase,
-        base_alloc_pct,
-        allocated_funds,
-        strategy,
-        pyramiding_rule,
-        exit_rule,
-    ])
+    allocated_amt = total_capital * (base_alloc / 100.0)
+    return pd.Series(
+        [base_alloc, allocated_amt, strategy, pyramiding, exit_rule]
+    )
 
 
   df_universe[[
-      "Detected_Phase",
       "Recommended_Alloc_Pct",
-      "Allocation_Amount_INR",
-      "Execution_Strategy",
+      "Allocation_INR",
+      "Strategy",
       "Pyramiding_Blueprint",
-      "Exit_Management_Rule",
-  ]] = df_universe.apply(calculate_advanced_execution_plan, axis=1)
+      "Exit_Rule",
+  ]] = df_universe.apply(calculate_execution_details, axis=1)
+
+  # Separate the Full Universe (Radar) from the Actionable Funnel Shortlist
+  actionable_df = df_universe[
+      df_universe["detected_phase"].isin(selected_phases)
+  ].sort_values(by="rsi", ascending=False)
 
   # Dashboard Layout Tabs
   tab1, tab2, tab3, tab4 = st.tabs([
-      "📥 Master Radar (Zero-Miss Pool)",
-      "🎯 Core Allocation & Phase Matrix",
-      "🚀 Parabolic & Pyramiding Blueprint",
-      "🛑 Exit & Risk Management Rules",
+      "📥 1. Master Radar (Zero-Miss Wide Net)",
+      "🎯 2. Funnel Shortlist (Potential Big Movers)",
+      "🚀 3. Pyramiding & Scaling Blueprint",
+      "🛑 4. Exit & Risk Management Protocols",
   ])
 
   with tab1:
     st.subheader(
-        f"Master Omnidirectional Database ({len(df_universe)} Total Stocks)"
+        f"Master Omnidirectional Universe ({len(df_universe)} Total Stocks Ingested)"
     )
-    search_query = st.text_input("Search Ticker or Company:", "").strip()
-    display_df = df_universe
-    if search_query:
-      display_df = df_universe[
+    st.markdown(
+        "The wide net containing **every single stock**. Nothing is missed"
+        " here."
+    )
+
+    search_radar = st.text_input(
+        "Search Ticker or Company in Master Radar:", ""
+    ).strip()
+    radar_display = df_universe
+    if search_radar:
+      radar_display = df_universe[
           df_universe["ticker"]
           .astype(str)
-          .str.contains(search_query, case=False, na=False)
+          .str.contains(search_radar, case=False, na=False)
           | df_universe["name"]
           .astype(str)
-          .str.contains(search_query, case=False, na=False)
+          .str.contains(search_radar, case=False, na=False)
       ]
 
     st.dataframe(
-        display_df[[
+        radar_display[[
             "name",
             "ticker",
             "cmp",
-            "Detected_Phase",
-            "trigger_reason",
+            "detected_phase",
             "rsi",
             "roc",
         ]],
@@ -217,50 +186,52 @@ if df_universe is not None and not df_universe.empty:
 
   with tab2:
     st.subheader(
-        "Actionable Allocation Plan Based on Life-Cycle & Parabolic Stage"
+        f"Filtered Multibagger Funnel Shortlist ({len(actionable_df)} High-Conviction Stocks)"
     )
-    active_portfolio_view = df_universe[
-        df_universe["Recommended_Alloc_Pct"] > 0
-    ].sort_values(by="Recommended_Alloc_Pct", ascending=False)
-    st.metric("Active Allocation Candidates", len(active_portfolio_view))
+    st.markdown(
+        "✨ **Dead & declining stocks have been filtered out.** This shortlist"
+        " contains only stocks clearing the Accumulation, Growth, or Parabolic"
+        " funnel gates."
+    )
+
+    st.metric("Actionable Shortlist Count", len(actionable_df))
     st.dataframe(
-        active_portfolio_view[[
+        actionable_df[[
             "name",
             "ticker",
-            "Detected_Phase",
+            "cmp",
+            "detected_phase",
             "Recommended_Alloc_Pct",
-            "Allocation_Amount_INR",
-            "Execution_Strategy",
+            "Allocation_INR",
+            "Strategy",
+            "rsi",
+            "roc",
         ]],
         use_container_width=True,
     )
 
   with tab3:
-    st.subheader("Pyramiding Structure & Profit Optimization Blueprint")
+    st.subheader("Pyramiding Structure for Funnel Shortlist")
+    st.markdown(
+        "Scaling rules applied **only** to stocks that made it through the"
+        " funnel."
+    )
     st.dataframe(
-        df_universe[[
+        actionable_df[[
             "name",
             "ticker",
-            "Detected_Phase",
+            "detected_phase",
             "Pyramiding_Blueprint",
         ]],
         use_container_width=True,
     )
 
   with tab4:
-    st.subheader("Trailing Stops & Exit Protocols")
+    st.subheader("Trailing Stops & Exit Protocols for Active Positions")
     st.dataframe(
-        df_universe[[
-            "name",
-            "ticker",
-            "Detected_Phase",
-            "Exit_Management_Rule",
-        ]],
+        actionable_df[["name", "ticker", "detected_phase", "Exit_Rule"]],
         use_container_width=True,
     )
+
 else:
-  st.error(f"❌ {load_status}")
-  st.info(
-      "Please make sure your CSV file is uploaded to the root directory of your"
-      " GitHub repository."
-  )
+  st.error(f"❌ {status_msg}")
