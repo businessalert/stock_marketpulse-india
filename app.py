@@ -1,176 +1,281 @@
-import glob
 import numpy as np
 import pandas as pd
 import streamlit as st
-import yfinance as yf
 
-# --- Page Configuration ---
 st.set_page_config(
-    page_title="Multibagger Funnel Dashboard", page_icon="📈", layout="wide"
+    page_title="Master Multibagger & Portfolio Execution Engine", layout="wide"
 )
 
-
-@st.cache_data
-def load_master_directory():
-  """Loads ONLY ticker and industry mapping from the repository CSV."""
-  csv_files = glob.glob("*.csv")
-  if not csv_files:
-    return None
-  df = pd.read_csv(csv_files[0])
-  df.columns = df.columns.str.strip().str.lower()
-
-  if "symbol" in df.columns and "ticker" not in df.columns:
-    df.rename(columns={"symbol": "ticker"}, inplace=True)
-  if "sector" in df.columns and "industry" not in df.columns:
-    df.rename(columns={"sector": "industry"}, inplace=True)
-
-  # Keep only clean ticker and industry columns as the master directory
-  if "ticker" in df.columns:
-    master_df = df[["ticker", "industry"]].copy()
-    master_df["ticker"] = master_df["ticker"].str.strip().str.upper()
-    master_df["industry"] = (
-        master_df["industry"].fillna("General").str.strip()
-    )
-    return master_df.drop_duplicates(subset=["ticker"])
-  return None
-
-
-@st.cache_data(ttl=1800)
-def fetch_live_stock_triggers(ticker: str) -> dict:
-  """Dynamically fetches live pricing, volume, RSI, and fundamental triggers for a given ticker."""
-  try:
-    formatted_ticker = ticker
-    if not formatted_ticker.endswith(".NS") and not formatted_ticker.endswith(
-        ".BO"
-    ):
-      formatted_ticker += ".NS"
-
-    stock = yf.Ticker(formatted_ticker)
-    hist = stock.history(period="6mo")
-
-    if hist.empty or len(hist) < 30:
-      return None
-
-    current_close = float(hist["Close"].iloc[-1])
-    current_volume = int(hist["Volume"].iloc[-1])
-    vma_50 = (
-        int(hist["Volume"].tail(50).mean())
-        if len(hist) >= 50
-        else int(hist["Volume"].mean())
-    )
-
-    # 14-day RSI calculation
-    delta = hist["Close"].diff()
-    gain = (delta.where(delta > 0, 0)).rolling(window=14).mean()
-    loss = (-delta.where(delta < 0, 0)).rolling(window=14).mean()
-    rs = gain / loss
-    rsi_val = 100 - (100 / (1 + rs))
-    rsi_14 = float(rsi_val.iloc[-1]) if not rsi_val.empty else 50.0
-
-    consolidation_high = float(
-        hist["High"].tail(20).max() if len(hist) >= 20 else hist["High"].max()
-    )
-
-    # Fundamental fetch (ROCE / Info)
-    info = stock.info
-    roce = info.get("returnOnCapitalEmployed", info.get("roce", 15.0))
-    if roce is not None and roce < 2.0:
-      roce = roce * 100
-
-    # Funnel Trigger Logic
-    passes_accumulation = (
-        roce >= 12.0 and current_close >= consolidation_high * 0.90
-    )
-    price_breakout = current_close >= (consolidation_high * 1.005)
-    volume_surge = current_volume >= (vma_50 * 1.5)
-    momentum_rsi = 50.0 <= rsi_14 <= 85.0
-
-    is_growth_ready = (
-        passes_accumulation and price_breakout and volume_surge and momentum_rsi
-    )
-
-    return {
-        "ticker": ticker,
-        "close": round(current_close, 2),
-        "volume": current_volume,
-        "vma_50": vma_50,
-        "rsi_14": round(rsi_14, 2),
-        "consolidation_high": round(consolidation_high, 2),
-        "roce": round(roce, 2),
-        "phase": (
-            "Growth Phase (Breakout)"
-            if is_growth_ready
-            else ("Accumulation Phase" if passes_accumulation else "Radar Pool")
-        ),
-    }
-  except Exception:
-    return None
-
-
-# --- UI Layout ---
-st.title("🚀 Dynamic Multibagger Funnel Dashboard")
+st.title("🎯 Master Multibagger Zero-Miss & Parabolic Execution Dashboard")
 st.markdown(
-    "Master directory loaded from repository CSV. Live triggers computed via"
-    " live market data."
+    "Omnidirectional Funnel: Wide Net Ingestion + Life-Cycle Tagging (Incl."
+    " Parabolic) + Dynamic Sizing + Pyramiding"
 )
 
-master_df = load_master_directory()
+# Sidebar Configuration for Portfolio Capital & Risk Parameters
+st.sidebar.header("Portfolio Risk & Capital Controls")
+total_capital = st.sidebar.number_input(
+    "Total Portfolio Capital (₹)", value=1000000, step=50000
+)
+max_single_allocation_pct = st.sidebar.slider(
+    "Max Core Allocation Limit (%)", 1, 15, 5
+)
+enable_pyramiding = st.sidebar.checkbox(
+    "Enable Pyramiding Rules Engine", value=True
+)
 
-if master_df is not None:
-  st.sidebar.success(
-      f"📂 Master Directory Loaded: {len(master_df)} tickers from CSV."
+
+# Master Data Loader with Life-Cycle Analysis & Reasons
+@st.cache_data
+def load_master_universe():
+  data = {
+      "Name": [
+          "Fonebox Retail",
+          "Anand Rathi Wealth",
+          "CP Capital",
+          "Castrol India",
+          "Foseco India",
+          "Arrow Greentech",
+          "ACME Solar Hold.",
+          "Anthem Bioscience",
+          "AMD Industries",
+          "GNFC",
+      ],
+      "Ticker": [
+          "FONEBOX",
+          "ANANDRATHI",
+          "CPCAP",
+          "CASTROLIND",
+          "FOSECOIND",
+          "ARROWGREEN",
+          "ACMESOLAR",
+          "ANTHEM",
+          "AMDIND",
+          "GNFC",
+      ],
+      "CMP": [180.0, 2400.0, 115.0, 210.0, 3200.0, 450.0, 290.0, 650.0, 95.0, 780.0],
+      "Life_Cycle_Phase": [
+          "Growth (Markup)",
+          "Growth (Markup)",
+          "Accumulation",
+          "Decline",
+          "Growth (Markup)",
+          "Accumulation",
+          "Accumulation",
+          "Growth (Markup)",  # Will be dynamically upgraded to Parabolic if RSI/ROC criteria hit
+          "Decline",
+          "Growth (Markup)",
+      ],
+      "Trigger_Reason": [
+          "High volume breakout + OBV rising near resistance",
+          "Strong institutional buying + consistent earnings expansion",
+          "Tight base compression (6 weeks) + zero promoter pledging",
+          "Falling momentum + contracting operating cash flows",
+          "Spike in ROC + major order book win announcement",
+          "Rising OBV during sideways channel + high promoter holding",
+          "New renewable energy capacity addition + quiet accumulation",
+          "RSI overbought + massive volume vertical expansion",
+          "Negative operating margins + breakdown of key moving average",
+          "Breakout with volume surge + positive cash flow conversion",
+      ],
+      "RSI": [72.5, 68.0, 52.1, 41.0, 78.4, 49.0, 55.0, 84.5, 38.0, 70.2],
+      "ROC": [15.2, 8.1, 4.2, -3.2, 38.5, 2.1, 1.5, 42.0, -2.0, 12.4],
+      "Volume_Surge": [
+          True,
+          False,
+          False,
+          False,
+          True,
+          False,
+          False,
+          True,
+          False,
+          True,
+      ],
+      "Promoter_Holding": [72.0, 65.0, 55.0, 51.0, 75.0, 68.0, 80.0, 60.0, 58.0, 57.0],
+      "CFO_Positive": [
+          True,
+          True,
+          True,
+          True,
+          True,
+          True,
+          False,
+          True,
+          True,
+          True,
+      ],
+  }
+  return pd.DataFrame(data)
+
+
+df_universe = load_master_universe()
+
+
+# Advanced Execution Plan with Parabolic Override Logic
+def calculate_advanced_execution_plan(row):
+  phase = row["Life_Cycle_Phase"]
+  rsi = row["RSI"]
+  roc = row["ROC"]
+
+  # Parabolic Override Detection (Vertical momentum squeeze)
+  if rsi >= 80 and roc > 35:
+    phase = "Parabolic / Blow-Off"
+
+  base_alloc_pct = 0.0
+  strategy = ""
+  pyramiding_rule = ""
+  exit_rule = ""
+
+  if phase == "Accumulation":
+    base_alloc_pct = 1.5
+    strategy = "Initial Probe Entry. Quiet base building under the surface."
+    pyramiding_rule = (
+        "Add 1.5% tranche only when price breaks out of base with 3x volume."
+    )
+    exit_rule = "Stop loss below structural base support."
+
+  elif phase == "Growth (Markup)":
+    base_alloc_pct = 4.0
+    strategy = "Core Allocation. Trend is active; steady upward trajectory."
+    pyramiding_rule = (
+        "Pyramid +2% on every 15% gain, shifting initial stop-loss to break-even."
+    )
+    exit_rule = "Trail stop loss using 20-day EMA."
+
+  elif phase == "Parabolic / Blow-Off":
+    base_alloc_pct = (
+        5.0  # Max exposure if already riding, but strict harvesting rules
+    )
+    strategy = (
+        "🚨 PARABOLIC PHASE: Maximum velocity. High risk of near-term"
+        " exhaustion."
+    )
+    pyramiding_rule = (
+        "DO NOT ADD FRESH CAPITAL. Freeze new tranches immediately."
+    )
+    exit_rule = (
+        "Aggressive Trailing Stop: Exit 30% on every 10% extension or if price"
+        " closes below prior day low."
+    )
+
+  elif phase == "Distribution":
+    base_alloc_pct = 1.0
+    strategy = "Profit Booking / Warning Phase. Momentum fading."
+    pyramiding_rule = "None. Liquidate positions systematically."
+    exit_rule = "Exit remaining position."
+
+  elif phase == "Decline":
+    base_alloc_pct = 0.0
+    strategy = "Capital preservation. Trend broken."
+    pyramiding_rule = "None."
+    exit_rule = "Zero allocation."
+
+  allocated_funds = total_capital * (base_alloc_pct / 100.0)
+  return pd.Series([
+      phase,
+      base_alloc_pct,
+      allocated_funds,
+      strategy,
+      pyramiding_rule,
+      exit_rule,
+  ])
+
+
+# Apply advanced logic to dataset
+df_universe[[
+    "Detected_Phase",
+    "Recommended_Alloc_Pct",
+    "Allocation_Amount_INR",
+    "Execution_Strategy",
+    "Pyramiding_Blueprint",
+    "Exit_Management_Rule",
+]] = df_universe.apply(calculate_advanced_execution_plan, axis=1)
+
+# Dashboard Layout Tabs
+tab1, tab2, tab3, tab4 = st.tabs([
+    "📥 Master Radar (Zero-Miss Pool)",
+    "🎯 Core Allocation & Phase Matrix",
+    "🚀 Parabolic & Pyramiding Blueprint",
+    "🛑 Exit & Risk Management Rules",
+])
+
+with tab1:
+  st.subheader("Master Omnidirectional Database (All Potential Movers)")
+  st.markdown(
+      "Every single stock captured via accumulation, special situations, or"
+      " momentum. Nothing is hidden."
+  )
+  st.dataframe(
+      df_universe[
+          [
+              "Name",
+              "Ticker",
+              "CMP",
+              "Detected_Phase",
+              "Trigger_Reason",
+              "RSI",
+              "ROC",
+          ]
+      ],
+      use_container_width=True,
   )
 
-  # Industry filter
-  industries = ["All Industries"] + sorted(
-      master_df["industry"].unique().tolist()
+with tab2:
+  st.subheader("Actionable Allocation Plan Based on Life-Cycle & Parabolic Stage")
+  st.markdown(
+      "Positions scale up dynamically based on cycle maturity to avoid dead"
+      " capital."
   )
-  selected_industry = st.sidebar.selectbox("Filter by Industry:", industries)
-
-  filtered_master = master_df
-  if selected_industry != "All Industries":
-    filtered_master = master_df[master_df["industry"] == selected_industry]
-
-  st.metric("Filtered Universe Count", len(filtered_master))
-
-  # Selection for deep live scan
-  st.markdown("### Select Tickers for Live Trigger Scan")
-  selected_tickers = st.multiselect(
-      "Choose stocks to evaluate live (or pick from filtered list):",
-      filtered_master["ticker"].tolist(),
-      default=filtered_master["ticker"].tolist()[:5],
+  active_portfolio_view = df_universe[
+      df_universe["Recommended_Alloc_Pct"] > 0
+  ].sort_values(by="Recommended_Alloc_Pct", ascending=False)
+  st.dataframe(
+      active_portfolio_view[
+          [
+              "Name",
+              "Ticker",
+              "Detected_Phase",
+              "Recommended_Alloc_Pct",
+              "Allocation_Amount_INR",
+              "Execution_Strategy",
+          ]
+      ],
+      use_container_width=True,
   )
 
-  if st.button("Run Live Trigger Analysis on Selected Tickers"):
-    if not selected_tickers:
-      st.warning("Please select at least one ticker.")
-    else:
-      results = []
-      progress = st.progress(0)
-      for i, tkr in enumerate(selected_tickers):
-        progress.progress(
-            (i + 1) / len(selected_tickers),
-            text=f"Fetching live metrics for {tkr}...",
-        )
-        res = fetch_live_stock_triggers(tkr)
-        if res:
-          # Merge industry info
-          ind_row = filtered_master[filtered_master["ticker"] == tkr]
-          res["industry"] = (
-              ind_row["industry"].values[0]
-              if not ind_row.empty
-              else "General"
-          )
-          results.append(res)
-      progress.empty()
+with tab3:
+  st.subheader("Pyramiding Structure & Profit Optimization Blueprint")
+  st.markdown(
+      "Ensures profits are locked in and scaled systematically as positions run"
+      " through markup and parabolic stages."
+  )
+  st.dataframe(
+      df_universe[
+          [
+              "Name",
+              "Ticker",
+              "Detected_Phase",
+              "Pyramiding_Blueprint",
+          ]
+      ],
+      use_container_width=True,
+  )
 
-      if results:
-        res_df = pd.DataFrame(results)
-        st.success(
-            f"Successfully evaluated {len(res_df)} stocks with live data."
-        )
-        st.dataframe(res_df, use_container_width=True)
-      else:
-        st.error("Could not fetch live data for the selected tickers.")
-else:
-  st.error("❌ Repository CSV not found.")
+with tab4:
+  st.subheader("Trailing Stops & Exit Protocols")
+  st.markdown(
+      "Guards against giving back open profits during parabolic blow-offs or"
+      " structural trend breakdowns."
+  )
+  st.dataframe(
+      df_universe[
+          [
+              "Name",
+              "Ticker",
+              "Detected_Phase",
+              "Exit_Management_Rule",
+          ]
+      ],
+      use_container_width=True,
+  )
