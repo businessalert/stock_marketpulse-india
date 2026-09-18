@@ -13,9 +13,9 @@ st.set_page_config(
 
 @st.cache_data(ttl=3600)
 def fetch_dynamic_stock_data(ticker_df: pd.DataFrame) -> pd.DataFrame:
-  """Takes a DataFrame with [ticker, industry] and dynamically fetches
+  """Takes a DataFrame and dynamically fetches all pricing, volume,
 
-  all pricing, volume, and metric data via yfinance.
+  and metric data via yfinance.
   """
   data_rows = []
 
@@ -110,17 +110,31 @@ def process_multibagger_funnel(df: pd.DataFrame) -> pd.DataFrame:
 # --- Streamlit UI Layout ---
 st.title("🚀 Dynamic Multibagger Funnel Dashboard")
 st.markdown(
-    "Upload a simple CSV containing **only** your ticker list and industry"
-    " mapping. The system handles all dynamic calculations automatically."
+    "Upload your CSV containing your ticker list and industry mapping."
+    " Everything else is calculated dynamically."
 )
 
 st.sidebar.header("Ticker & Industry Source")
-uploaded_file = st.sidebar.file_uploader(
-    "Upload CSV (Columns: ticker, industry)", type=["csv"]
-)
+uploaded_file = st.sidebar.file_uploader("Upload CSV", type=["csv"])
 
 if uploaded_file is not None:
   input_ticker_df = pd.read_csv(uploaded_file)
+
+  # Robust column cleaning: lowercase and strip whitespace from headers
+  input_ticker_df.columns = (
+      input_ticker_df.columns.str.strip().str.lower()
+  )
+
+  # Map alternate names gracefully if needed
+  if "symbol" in input_ticker_df.columns and "ticker" not in input_ticker_df.columns:
+    input_ticker_df.rename(columns={"symbol": "ticker"}, inplace=True)
+  if "sector" in input_ticker_df.columns and "industry" not in input_ticker_df.columns:
+    input_ticker_df.rename(columns={"sector": "industry"}, inplace=True)
+
+  # Fallback/default for industry if missing
+  if "industry" not in input_ticker_df.columns:
+    input_ticker_df["industry"] = "Unmapped"
+
 else:
   st.sidebar.info(
       "No file uploaded. Using default sample ticker & industry mapping."
@@ -186,4 +200,6 @@ if "processed_df" in st.session_state:
   else:
     st.info("ℹ️ No stocks currently meeting full Growth Phase breakout triggers.")
 else:
-  st.info("👈 Upload your ticker-industry CSV or use default, then click 'Run Funnel Scan'.")
+  st.info(
+      "👈 Upload your CSV file in the sidebar and click 'Run Funnel Scan'."
+  )
