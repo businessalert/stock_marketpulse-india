@@ -43,7 +43,6 @@ def fetch_dynamic_stock_data(ticker_df: pd.DataFrame) -> pd.DataFrame:
       else (ticker_df.columns[1] if len(ticker_df.columns) > 1 else None)
   )
 
-  # Progress bar for scanning large universe
   progress_bar = st.progress(0)
   total_stocks = len(ticker_df)
 
@@ -55,7 +54,6 @@ def fetch_dynamic_stock_data(ticker_df: pd.DataFrame) -> pd.DataFrame:
         else "General/Unmapped"
     )
 
-    # Update progress
     progress_bar.progress(
         min((idx + 1) / total_stocks, 1.0),
         text=f"Scanning universe ({idx + 1}/{total_stocks}): {ticker}",
@@ -82,7 +80,6 @@ def fetch_dynamic_stock_data(ticker_df: pd.DataFrame) -> pd.DataFrame:
       )
       current_volume = hist["Volume"].iloc[-1]
 
-      # RSI-14 calculation
       delta = hist["Close"].diff()
       gain = (delta.where(delta > 0, 0)).rolling(window=14).mean()
       loss = (-delta.where(delta < 0, 0)).rolling(window=14).mean()
@@ -96,13 +93,12 @@ def fetch_dynamic_stock_data(ticker_df: pd.DataFrame) -> pd.DataFrame:
           else hist["High"].max()
       )
 
-      # Safe fundamental extraction with realistic default mapping
       info = stock.info
       roce = info.get("returnOnCapitalEmployed", info.get("roce", None))
       if roce is not None:
         roce = roce * 100 if roce < 2.0 else roce
       else:
-        roce = 14.0  # Default baseline to prevent blank dropouts
+        roce = 14.0
 
       data_rows.append({
           "ticker": ticker,
@@ -110,7 +106,7 @@ def fetch_dynamic_stock_data(ticker_df: pd.DataFrame) -> pd.DataFrame:
           "close": round(current_close, 2),
           "volume": int(current_volume),
           "vma_50": int(vma_50),
-          "delivery_pct": 65.0,  # Baseline institutional delivery proxy
+          "delivery_pct": 65.0,
           "rsi_14": round(rsi_14, 2) if not np.isnan(rsi_14) else 50.0,
           "consolidation_high": round(consolidation_high, 2),
           "roce": round(roce, 2),
@@ -123,13 +119,25 @@ def fetch_dynamic_stock_data(ticker_df: pd.DataFrame) -> pd.DataFrame:
 
 
 def process_multibagger_funnel(df: pd.DataFrame) -> pd.DataFrame:
-  """Applies the multi-tiered funnel logic across the full dataset."""
-  if df.empty:
-    return df
+  """Applies the multi-tiered funnel logic across the full dataset safely."""
+  if df is None or df.empty:
+    return pd.DataFrame(columns=[
+        "ticker",
+        "industry",
+        "close",
+        "volume",
+        "vma_50",
+        "delivery_pct",
+        "rsi_14",
+        "consolidation_high",
+        "roce",
+        "passes_accumulation",
+        "lifecycle_phase",
+        "is_transition_ready",
+    ])
 
   data = df.copy()
 
-  # Stage 1 & 2: Accumulation Gate (ROCE > 12%, Price near breakout base)
   data["passes_accumulation"] = (
       (data["roce"] >= 12.0)
       & (data["delivery_pct"] >= 60.0)
@@ -140,7 +148,6 @@ def process_multibagger_funnel(df: pd.DataFrame) -> pd.DataFrame:
       data["passes_accumulation"], "Accumulation Phase", "Radar Pool"
   )
 
-  # Stage 3: Growth Phase Trigger (Volume Surge + Momentum Breakout)
   price_breakout = data["close"] >= (data["consolidation_high"] * 1.005)
   volume_surge = data["volume"] >= (data["vma_50"] * 1.5)
   momentum_rsi = (data["rsi_14"] >= 50.0) & (data["rsi_14"] <= 85.0)
@@ -178,46 +185,52 @@ else:
 if "processed_df" in st.session_state:
   processed_df = st.session_state["processed_df"]
 
-  col1, col2, col3, col4 = st.columns(4)
-  col1.metric("Total Universe Processed", len(processed_df))
-  col2.metric(
-      "Radar Pool",
-      len(processed_df[processed_df["lifecycle_phase"] == "Radar Pool"]),
-  )
-  col3.metric(
-      "Accumulation Phase",
-      len(
-          processed_df[
-              processed_df["lifecycle_phase"] == "Accumulation Phase"
-          ]
-      ),
-  )
-  col4.metric(
-      "Growth Phase (Ready)",
-      len(processed_df[processed_df["is_transition_ready"]]),
-  )
-
-  st.markdown("---")
-
-  selected_phase = st.selectbox(
-      "Select Funnel Tier to Display:",
-      ["All Tiers", "Radar Pool", "Accumulation Phase", "Growth Phase"],
-  )
-
-  display_df = (
-      processed_df
-      if selected_phase == "All Tiers"
-      else processed_df[processed_df["lifecycle_phase"] == selected_phase]
-  )
-  st.dataframe(display_df, use_container_width=True)
-
-  growth_alerts = processed_df[processed_df["is_transition_ready"]]
-  if not growth_alerts.empty:
-    st.error(
-        "🚨 **Execution Alert:** Breakout triggers cleared for:"
-        f" {', '.join(growth_alerts['ticker'].tolist()[:10])}"
+  if not processed_df.empty and "lifecycle_phase" in processed_df.columns:
+    col1, col2, col3, col4 = st.columns(4)
+    col1.metric("Total Universe Processed", len(processed_df))
+    col2.metric(
+        "Radar Pool",
+        len(processed_df[processed_df["lifecycle_phase"] == "Radar Pool"]),
     )
+    col3.metric(
+        "Accumulation Phase",
+        len(
+            processed_df[
+                processed_df["lifecycle_phase"] == "Accumulation Phase"
+            ]
+        ),
+    )
+    col4.metric(
+        "Growth Phase (Ready)",
+        len(processed_df[processed_df["is_transition_ready"]]),
+    )
+
+    st.markdown("---")
+
+    selected_phase = st.selectbox(
+        "Select Funnel Tier to Display:",
+        ["All Tiers", "Radar Pool", "Accumulation Phase", "Growth Phase"],
+    )
+
+    display_df = (
+        processed_df
+        if selected_phase == "All Tiers"
+        else processed_df[processed_df["lifecycle_phase"] == selected_phase]
+    )
+    st.dataframe(display_df, use_container_width=True)
+
+    growth_alerts = processed_df[processed_df["is_transition_ready"]]
+    if not growth_alerts.empty:
+      st.error(
+          "🚨 **Execution Alert:** Breakout triggers cleared for:"
+          f" {', '.join(growth_alerts['ticker'].tolist()[:10])}"
+      )
+    else:
+      st.info("ℹ️ No stocks currently meeting full Growth Phase breakout triggers.")
   else:
-    st.info("ℹ️ No stocks currently meeting full Growth Phase breakout triggers.")
+    st.warning(
+        "⚠️ Scan completed, but no stock data was successfully retrieved from"
+        " the API."
+    )
 else:
   st.info("👈 Click 'Run Full Funnel Scan' in the sidebar to start processing.")
