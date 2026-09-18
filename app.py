@@ -1,3 +1,4 @@
+import glob
 import numpy as np
 import pandas as pd
 import streamlit as st
@@ -12,17 +13,50 @@ st.set_page_config(
 
 
 @st.cache_data(ttl=3600)
-def fetch_dynamic_stock_data(ticker_df: pd.DataFrame) -> pd.DataFrame:
-  """Takes a DataFrame and dynamically fetches all pricing, volume,
+def load_repo_csv():
+  """Automatically searches and loads the CSV file from the repository directory."""
+  csv_files = glob.glob("*.csv")
+  if not csv_files:
+    return None
 
-  and metric data via yfinance.
+  # Load the first available CSV (e.g., query-results_13.09.2026.csv)
+  file_path = csv_files[0]
+  df = pd.read_csv(file_path)
+
+  # Normalize column names (lowercase and strip whitespace)
+  df.columns = df.columns.str.strip().str.lower()
+
+  # Map alternate column names gracefully
+  if "symbol" in df.columns and "ticker" not in df.columns:
+    df.rename(columns={"symbol": "ticker"}, inplace=True)
+  if "sector" in df.columns and "industry" not in df.columns:
+    df.rename(columns={"sector": "industry"}, inplace=True)
+
+  return df
+
+
+@st.cache_data(ttl=3600)
+def fetch_dynamic_stock_data(ticker_df: pd.DataFrame) -> pd.DataFrame:
+  """Takes the repository DataFrame and dynamically fetches all pricing,
+
+  volume, and metric data via yfinance.
   """
   data_rows = []
 
+  # Ensure ticker column exists
+  ticker_col = "ticker" if "ticker" in ticker_df.columns else ticker_df.columns[0]
+  industry_col = (
+      "industry"
+      if "industry" in ticker_df.columns
+      else (ticker_df.columns[1] if len(ticker_df.columns) > 1 else None)
+  )
+
   for _, row in ticker_df.iterrows():
-    ticker = str(row["ticker"]).strip().upper()
+    ticker = str(row[ticker_col]).strip().upper()
     industry = (
-        str(row["industry"]) if "industry" in row else "General/Unmapped"
+        str(row[industry_col])
+        if industry_col and pd.notna(row[industry_col])
+        else "General/Unmapped"
     )
 
     try:
@@ -65,7 +99,7 @@ def fetch_dynamic_stock_data(ticker_df: pd.DataFrame) -> pd.DataFrame:
           "close": round(current_close, 2),
           "volume": int(current_volume),
           "vma_50": int(vma_50),
-          "delivery_pct": 70.0,  # Estimated baseline delivery
+          "delivery_pct": 70.0,
           "rsi_14": round(rsi_14, 2),
           "consolidation_high": round(consolidation_high, 2),
           "roce": round(roce, 2),
@@ -110,53 +144,31 @@ def process_multibagger_funnel(df: pd.DataFrame) -> pd.DataFrame:
 # --- Streamlit UI Layout ---
 st.title("🚀 Dynamic Multibagger Funnel Dashboard")
 st.markdown(
-    "Upload your CSV containing your ticker list and industry mapping."
-    " Everything else is calculated dynamically."
+    "Automatically loads your stock list and industry mapping directly from your"
+    " repository CSV file."
 )
 
-st.sidebar.header("Ticker & Industry Source")
-uploaded_file = st.sidebar.file_uploader("Upload CSV", type=["csv"])
+# Automatically load CSV from repository
+input_ticker_df = load_repo_csv()
 
-if uploaded_file is not None:
-  input_ticker_df = pd.read_csv(uploaded_file)
-
-  # Robust column cleaning: lowercase and strip whitespace from headers
-  input_ticker_df.columns = (
-      input_ticker_df.columns.str.strip().str.lower()
+if input_ticker_df is not None:
+  st.sidebar.success("📂 Repository CSV Loaded Successfully!")
+  st.sidebar.write(
+      f"Loaded **{len(input_ticker_df)}** tickers from your source file."
   )
 
-  # Map alternate names gracefully if needed
-  if "symbol" in input_ticker_df.columns and "ticker" not in input_ticker_df.columns:
-    input_ticker_df.rename(columns={"symbol": "ticker"}, inplace=True)
-  if "sector" in input_ticker_df.columns and "industry" not in input_ticker_df.columns:
-    input_ticker_df.rename(columns={"sector": "industry"}, inplace=True)
-
-  # Fallback/default for industry if missing
-  if "industry" not in input_ticker_df.columns:
-    input_ticker_df["industry"] = "Unmapped"
-
+  if st.sidebar.button("Run Funnel Scan"):
+    with st.spinner(
+        "Fetching live market data and mapping dynamic indicators..."
+    ):
+      raw_fetched_df = fetch_dynamic_stock_data(input_ticker_df)
+      processed_df = process_multibagger_funnel(raw_fetched_df)
+      st.session_state["processed_df"] = processed_df
 else:
-  st.sidebar.info(
-      "No file uploaded. Using default sample ticker & industry mapping."
+  st.sidebar.error(
+      "❌ No CSV file found in the repository. Please ensure your list CSV is"
+      " committed."
   )
-  input_ticker_df = pd.DataFrame({
-      "ticker": ["RELIANCE", "TCS", "INFY", "TATAMOTORS", "SBIN"],
-      "industry": [
-          "Energy",
-          "IT Services",
-          "IT Services",
-          "Automobile",
-          "Banking",
-      ],
-  })
-
-if st.sidebar.button("Run Funnel Scan"):
-  with st.spinner(
-      "Fetching live market data and mapping dynamic indicators..."
-  ):
-    raw_fetched_df = fetch_dynamic_stock_data(input_ticker_df)
-    processed_df = process_multibagger_funnel(raw_fetched_df)
-    st.session_state["processed_df"] = processed_df
 
 # Load from session state if available
 if "processed_df" in st.session_state:
@@ -201,5 +213,6 @@ if "processed_df" in st.session_state:
     st.info("ℹ️ No stocks currently meeting full Growth Phase breakout triggers.")
 else:
   st.info(
-      "👈 Upload your CSV file in the sidebar and click 'Run Funnel Scan'."
+      "👈 Click 'Run Funnel Scan' in the sidebar to process your repository"
+      " stock list."
   )
