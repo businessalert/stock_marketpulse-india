@@ -100,8 +100,8 @@ def process_multibagger_funnel(df: pd.DataFrame) -> pd.DataFrame:
   momentum_rsi = (data["rsi_14"] >= 55.0) & (data["rsi_14"] <= 80.0)
 
   data["is_transition_ready"] = (
-      data["passes_accumulation"] & price_breakother := price_breakout
-  ) & volume_surge & momentum_rsi
+      data["passes_accumulation"] & price_breakout & volume_surge & momentum_rsi
+  )
 
   data.loc[data["is_transition_ready"], "lifecycle_phase"] = "Growth Phase"
   return data
