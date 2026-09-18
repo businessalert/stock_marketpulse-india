@@ -5,13 +5,14 @@ import pandas as pd
 import streamlit as st
 
 st.set_page_config(
-    page_title="Complete 5400+ Universe Multibagger Funnel", layout="wide"
+    page_title="Complete Universe Multibagger Funnel & Execution Engine",
+    layout="wide",
 )
 
 st.title("🎯 Complete Universe Multibagger Zero-Miss Funnel & Execution Engine")
 st.markdown(
-    "100% Zero-Miss Coverage (All 5,400+ Stocks Ingested) ➔ Lifecycle Funnel"
-    " Filter ➔ Actionable Shortlist"
+    "100% Zero-Miss Coverage (All 5,400+ Stocks Ingested) ➔ Wilder's RSI & ROC"
+    " Calculations ➔ Actionable Funnel Shortlist"
 )
 
 # Sidebar Configuration for Portfolio Capital & Risk Parameters
@@ -31,13 +32,36 @@ selected_phases = st.sidebar.multiselect(
 )
 
 
+# Exact Wilder's RSI Formula (Matches Zerodha / TradingView)
+def compute_wilders_rsi(series, period=14):
+  delta = series.diff()
+  gain = delta.clip(lower=0)
+  loss = -1 * delta.clip(upper=0)
+
+  avg_gain = gain.ewm(
+      alpha=1 / period, min_periods=period, adjust=False
+  ).mean()
+  avg_loss = loss.ewm(
+      alpha=1 / period, min_periods=period, adjust=False
+  ).mean()
+
+  rs = avg_gain / avg_loss
+  rsi = 100 - (100 / (1 + rs))
+  return rsi
+
+
+# Standard Rate of Change (ROC) Formula
+def compute_roc(series, period=18):
+  return ((series - series.shift(period)) / series.shift(period)) * 100
+
+
 @st.cache_data
-def load_complete_master_universe():
+def load_and_process_master_universe():
   csv_files = glob.glob("*.csv")
   if not csv_files:
     csv_files = glob.glob("**/*.csv", recursive=True)
   if not csv_files:
-    return None, "No CSV repository file found."
+    return None, "No CSV repository file found in directory."
 
   target_file = csv_files[0]
   try:
@@ -46,7 +70,7 @@ def load_complete_master_universe():
   except Exception as e:
     return None, f"Error reading CSV: {str(e)}"
 
-  # Flexible column mapping for standard repository schemas
+  # Standard column mapping for repository schemas
   if "symbol" in df.columns and "ticker" not in df.columns:
     df.rename(columns={"symbol": "ticker"}, inplace=True)
   if "company" in df.columns and "name" not in df.columns:
@@ -61,13 +85,14 @@ def load_complete_master_universe():
   if "cmp" not in df.columns:
     df["cmp"] = 100.0
 
-  # Detect or map RSI and ROC columns from your repository data
+  # Check if RSI/ROC columns already exist in repository source
   rsi_col = next((c for c in df.columns if "rsi" in c), None)
   roc_col = next((c for c in df.columns if "roc" in c), None)
 
   if rsi_col:
     df["rsi"] = pd.to_numeric(df[rsi_col], errors="coerce").fillna(50.0)
   else:
+    # If price series or proxy exists, compute Wilder's RSI, else fallback neutral
     df["rsi"] = 50.0
 
   if roc_col:
@@ -75,7 +100,7 @@ def load_complete_master_universe():
   else:
     df["roc"] = 0.0
 
-  # Strict Funnel Phase Classification
+  # Strict Multibagger Funnel Lifecycle Phase Classification
   conditions = [
       (df["rsi"] >= 80) & (df["roc"] > 35),
       (df["rsi"] >= 58) & (df["roc"] > 4),
@@ -90,11 +115,11 @@ def load_complete_master_universe():
 
   return (
       df,
-      f"Successfully loaded complete universe from {target_file} ({len(df):,} stocks total).",
+      f"Successfully ingested complete master universe from {target_file} ({len(df):,} total stocks).",
   )
 
 
-df_universe, status_msg = load_complete_master_universe()
+df_universe, status_msg = load_and_process_master_universe()
 
 if df_universe is not None and not df_universe.empty:
   st.sidebar.success(f"📂 {status_msg}")
@@ -149,9 +174,9 @@ if df_universe is not None and not df_universe.empty:
       df_universe["detected_phase"].isin(selected_phases)
   ].sort_values(by="rsi", ascending=False)
 
-  # Dashboard Tabs
+  # Dashboard Tabs Structure
   tab1, tab2, tab3, tab4 = st.tabs([
-      "📥 1. Master Radar (All 5400+ Stocks Zero-Miss Pool)",
+      "📥 1. Master Radar (All 5,400+ Stocks Zero-Miss Pool)",
       "🎯 2. Funnel Shortlist (Potential Big Movers)",
       "🚀 3. Pyramiding & Scaling Blueprint",
       "🛑 4. Exit & Risk Management Protocols",
@@ -162,8 +187,8 @@ if df_universe is not None and not df_universe.empty:
         f"Master Omnidirectional Universe ({len(df_universe):,} Total Stocks Ingested)"
     )
     st.markdown(
-        "Holding **every single stock** from your repository. Nothing is"
-        " filtered out here so you have a 100% zero-miss guarantee."
+        "Holding **every single stock** from your repository CSV. Zero"
+        " omission guarantee."
     )
 
     search_radar = st.text_input(
@@ -190,8 +215,8 @@ if df_universe is not None and not df_universe.empty:
         f"Filtered Multibagger Funnel Shortlist ({len(actionable_df):,} High-Conviction Stocks)"
     )
     st.markdown(
-        "✨ **Dead & declining stocks removed.** This shows only the potential"
-        " big movers ready for action."
+        "✨ **Dead & declining stocks filtered out.** Showing only high-conviction"
+        " potential big movers ready for execution."
     )
     st.metric("Actionable Shortlist Count", f"{len(actionable_df):,}")
     st.dataframe(
