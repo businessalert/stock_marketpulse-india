@@ -27,46 +27,49 @@ enable_pyramiding = st.sidebar.checkbox(
 )
 
 
-# Master Data Loader reading the full repository CSV
 @st.cache_data
 def load_master_universe():
-  filename = "query-results_13.09.2026.csv"
-  if not os.path.exists(filename):
-    csv_files = glob.glob("*.csv")
-    if csv_files:
-      filename = csv_files[0]
-    else:
-      return None
+  # Find any CSV file in the root repository
+  csv_files = glob.glob("*.csv")
+  if not csv_files:
+    # Fallback search in current and parent directories
+    csv_files = glob.glob("**/*.csv", recursive=True)
 
-  df = pd.read_csv(filename)
-  df.columns = df.columns.str.strip().str.lower()
+  if not csv_files:
+    return None, "No CSV files found in repository directory."
 
-  # Normalize column names based on repository structure
+  target_file = csv_files[0]
+  try:
+    df = pd.read_csv(target_file)
+    df.columns = df.columns.str.strip().str.lower()
+  except Exception as e:
+    return None, f"Error reading {target_file}: {str(e)}"
+
+  # Flexible column mapping for standard repository schemas
   if "symbol" in df.columns and "ticker" not in df.columns:
     df.rename(columns={"symbol": "ticker"}, inplace=True)
-  if "sector" in df.columns and "industry" not in df.columns:
-    df.rename(columns={"sector": "industry"}, inplace=True)
-  if "name" not in df.columns and "company" in df.columns:
+  if "company" in df.columns and "name" not in df.columns:
     df.rename(columns={"company": "name"}, inplace=True)
+  if "close" in df.columns and "cmp" not in df.columns:
+    df.rename(columns={"close": "cmp"}, inplace=True)
 
-  # Ensure essential columns exist, generate sensible defaults if missing from CSV
   if "ticker" not in df.columns:
-    return None
+    # Use the first available column as ticker if 'ticker'/'symbol' not explicitly named
+    df.rename(columns={df.columns[0]: "ticker"}, inplace=True)
 
   if "name" not in df.columns:
     df["name"] = df["ticker"]
-  if "cmp" not in df.columns and "close" in df.columns:
-    df["cmp"] = df["close"]
-  elif "cmp" not in df.columns:
+  if "cmp" not in df.columns:
     df["cmp"] = 100.0
 
+  # Generate indicators if missing
+  np.random.seed(42)
   if "rsi" not in df.columns:
-    np.random.seed(42)
     df["rsi"] = np.random.uniform(35, 85, size=len(df))
   if "roc" not in df.columns:
     df["roc"] = np.random.uniform(-5, 40, size=len(df))
 
-  # Dynamic Life Cycle Phase Assignment based on indicators
+  # Life Cycle Phase Assignment
   conditions = [
       (df["rsi"] >= 80) & (df["roc"] > 35),
       (df["rsi"] >= 60) & (df["roc"] > 5),
@@ -94,18 +97,15 @@ def load_master_universe():
         ),
     )
 
-  return df
+  return df, f"Successfully loaded {target_file} ({len(df)} rows)."
 
 
-df_universe = load_master_universe()
+df_universe, load_status = load_master_universe()
 
 if df_universe is not None and not df_universe.empty:
-  st.sidebar.success(
-      f"📂 Loaded Full Universe: {len(df_universe)} stocks from CSV."
-  )
+  st.sidebar.success(f"📂 {load_status}")
 
 
-  # Advanced Execution Plan with Parabolic Override Logic
   def calculate_advanced_execution_plan(row):
     phase = str(row["life_cycle_phase"])
     rsi = float(row["rsi"])
@@ -126,7 +126,6 @@ if df_universe is not None and not df_universe.empty:
           "Add 1.5% tranche only when price breaks out of base with 3x volume."
       )
       exit_rule = "Stop loss below structural base support."
-
     elif phase == "Growth (Markup)":
       base_alloc_pct = min(4.0, float(max_single_allocation_pct))
       strategy = "Core Allocation. Trend is active; steady upward trajectory."
@@ -135,7 +134,6 @@ if df_universe is not None and not df_universe.empty:
           " break-even."
       )
       exit_rule = "Trail stop loss using 20-day EMA."
-
     elif phase == "Parabolic / Blow-Off":
       base_alloc_pct = min(5.0, float(max_single_allocation_pct))
       strategy = (
@@ -149,14 +147,12 @@ if df_universe is not None and not df_universe.empty:
           "Aggressive Trailing Stop: Exit 30% on every 10% extension or if price"
           " closes below prior day low."
       )
-
     elif phase == "Distribution":
       base_alloc_pct = 1.0
       strategy = "Profit Booking / Warning Phase. Momentum fading."
       pyramiding_rule = "None. Liquidate positions systematically."
       exit_rule = "Exit remaining position."
-
-    else:  # Decline
+    else:
       base_alloc_pct = 0.0
       strategy = "Capital preservation. Trend broken."
       pyramiding_rule = "None."
@@ -173,7 +169,6 @@ if df_universe is not None and not df_universe.empty:
     ])
 
 
-  # Apply advanced logic across the entire CSV dataset
   df_universe[[
       "Detected_Phase",
       "Recommended_Alloc_Pct",
@@ -195,21 +190,15 @@ if df_universe is not None and not df_universe.empty:
     st.subheader(
         f"Master Omnidirectional Database ({len(df_universe)} Total Stocks)"
     )
-    st.markdown(
-        "Every single stock from your repository CSV processed through the"
-        " life-cycle funnel."
-    )
-
-    # Optional search / filter
-    search_query = st.text_input(
-        "Search Ticker or Company:", ""
-    ).strip()
+    search_query = st.text_input("Search Ticker or Company:", "").strip()
     display_df = df_universe
     if search_query:
       display_df = df_universe[
           df_universe["ticker"]
+          .astype(str)
           .str.contains(search_query, case=False, na=False)
           | df_universe["name"]
+          .astype(str)
           .str.contains(search_query, case=False, na=False)
       ]
 
@@ -270,7 +259,8 @@ if df_universe is not None and not df_universe.empty:
         use_container_width=True,
     )
 else:
-  st.error(
-      "❌ Repository CSV file not found or could not be parsed. Please check"
-      " your file."
+  st.error(f"❌ {load_status}")
+  st.info(
+      "Please make sure your CSV file is uploaded to the root directory of your"
+      " GitHub repository."
   )
